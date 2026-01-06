@@ -1,171 +1,228 @@
-# juicebox-mcp
+# Juicebox MCP Server
 
-juicebox-mcp is an embeddable interactive contact map viewer for .hic files written in JavaScript and CSS. It is based 
-on the desktop Juicebox visualization application. This is the MCP-enabled version of juicebox.js. 
+An MCP (Model Context Protocol) server that enables Claude to control Juicebox Hi-C contact map visualizations through natural language. Search for Hi-C datasets, load maps, navigate genomic loci, configure visualizations, and explore chromatin architecture—all through conversation with Claude.
 
-# Installation
+## What is This?
 
-Requirements:
+Juicebox MCP Server is derived from the JavaScript version of Juicebox and transforms it into an **AI-powered research assistant** for exploring Hi-C contact maps. Instead of manually navigating web interfaces and configuring visualizations, you can:
 
-* [Font Awesome CSS](https://fontawesome.com/) 
+- **Search** for Hi-C datasets using natural language ("Show me human K562 cell maps")
+- **Load** maps and tracks with intelligent recommendations
+- **Navigate** to genomic regions by gene name or coordinates
+- **Configure** visualizations through conversation
+- **Discover** complementary datasets automatically
+- **Share** visualizations via shareable URLs
 
-    ```<link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/font-awesome/4.2.0/css/font-awesome.min.css">```
+The server connects Claude Desktop to a browser-based Juicebox frontend, enabling seamless control of Hi-C visualizations through natural language.
 
-* Juicebox CSS
+## Installation
 
-    ``` <link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/npm/juicebox.js@2.4.8/dist/css/juicebox.css">```
-    
-* Juicebox javascript -- see below
+### Prerequisites
 
+- **Claude Desktop** installed ([Download here](https://claude.ai/download))
 
-To import juicebox as an ES6 module
+### Install the MCP Server
 
-```javascript
-import juicebox from "https://cdn.jsdelivr.net/npm/juicebox.js@2.4.8/dist/juicebox.esm.js";
-``` 
+1. **Download the MCP Server Package**
+   - Download the `.mcpb` file directly: [juicebox-mcp-20251219-164324.mcpb](https://github.com/aidenlab/juicebox-mcp/blob/main/juicebox-mcp-20251219-164324.mcpb)
+   - Or build it yourself (see [Building from Source](#building-from-source) below)
 
-Or as a script include (defines the "juicebox" global)
+2. **Install in Claude Desktop**
+   - Open Claude Desktop
+   - Go to **Settings** (macOS: `Cmd + ,` | Windows: `Ctrl + ,`)
+   - Navigate to **Developer** → **Add MCP Server**
+   - Click **Install from file**
+   - Select the `.mcpb` file you downloaded
+   - Claude Desktop will automatically extract and configure the server
 
-```html
-<script src="https://cdn.jsdelivr.net/npm/juicebox.js@2.4.8/dist/juicebox.min.js"></script>
-```   
- 
-Alternatively you can install with npm  
- 
- ```npm install juicebox```
+3. **Verify Installation**
+   - The server should appear in your MCP servers list
+   - Restart Claude Desktop if needed
 
-and source the appropriate file for your module system (juicebox.min.js or juicebox.esm.js) in node_modules/juicebos.js/dist.  Or build from source (see Development section below).
+That's it! The MCP server is now installed and ready to use.
 
-# Usage
+## Getting Started
 
-To create an juicebox instance call ```juicebox.init``` with a container div  and an initial configuration object as 
-illustrated below.   
+### Step 1: Open the Browser Frontend
 
-```javascript
-   juicebox.init(container, config)
-       .then(function (hicBrowser) {
-            console.log("Juicebox loaded");
-        })
-
-```
-
-Configuration ```config``` object examples follow
-
-* A minimal juicebox config containing only a hic map with all default settings (see [examples/juicebox-minimal](https://github.com/igvteam/juicebox.js/blob/master/examples/juicebox-minimal.html)): 
+In Claude Desktop, ask Claude to open Juicebox:
 
 ```
-   const config = {
-       "url": "https://hicfiles.s3.amazonaws.com/hiseq/gm12878/dilution/combined.hic",    
-   }
-
+You: "Open Juicebox" or "Get the Juicebox URL"
 ```
 
+Claude will provide a URL—open it in your web browser. The browser will automatically connect to the MCP server running in Claude Desktop.
 
+### Step 2: Start Exploring
 
-
-* Juicebox config with contact map, gene annotations, CTCF wig track, and 2D annotations (see [examples/juicebox.html](https://github.com/aidenlab/juicebox-mcp/blob/main/examples/juicebox.html)):
-
-
-
+Once the browser is open, you can start exploring Hi-C data through natural language:
 
 ```
-   const config = {
-            "url": "https://hicfiles.s3.amazonaws.com/hiseq/gm12878/dilution/combined.hic",
-            "name": "Combined",
-            "locus": "18:28,504,357-29,748,974 18:28,504,357-29,748,974",
-            "normalization": "VC_SQRT",
-            "backgroundColor": "255,255,255",
-            "colorScale": "60,255,0,0",
-            "tracks": [
-                {
-                    "url": "https://www.encodeproject.org/files/ENCFF144KUK/@@download/ENCFF144KUK.bigWig",
-                    "type": "wig",
-                    "format": "bigwig",
-                    "name": "Homo sapiens GM12878 CTCF "
-                    "color": "green"
-                },
-                {
-                    "url": "https://hgdownload.soe.ucsc.edu/goldenPath/hg19/database/ncbiRefSeq.txt.gz",
-                    "type": "annotation",
-                    "format": "refgene",
-                    "name": "Refseq Genes",
-                },
-                {
-                    "url": "https://hicfiles.s3.amazonaws.com/hiseq/gm12878/in-situ/combined_peaks.txt",
-                    "name": "Rao & Huntley et al. | Cell 2014 | GM12878 combined loops"
-                },
-                {
-                    "url": "https://hicfiles.s3.amazonaws.com/hiseq/hap1/in-situ/combined_peaks.txt",
-                    "name": "Sanborn & Rao et al. | PNAS 2015 | Hap1 loops",
-                    "color": "#fffa03",
-                    "displayMode": "upper"
-                },
-                {
-                    "url": "https://hicfiles.s3.amazonaws.com/external/mumbach/GSE80820_HiChIP_GM_cohesin_peaks.txt",
-                    "name": "Mumbach Rubin Flynn et al. | Nature Methods 2016 | GM12878 cohesin combined loops",
-                    "color": "#000000",
-                    "displayMode": "lower"
-                }
-            ]
-        }
+You: "Find Hi-C maps for human K562 cells"
+
+Claude: [Searches available data sources]
+        "I found 8 K562 cell line maps. Here are the top results:
+        - Map #1: ENCODE K562 Hi-C (hg38, high resolution)
+        - Map #2: 4DN K562 Hi-C (hg38, recent data)
+        ...
+        Which would you like to load?"
+
+You: "Load the first one"
+
+Claude: [Loads the map and displays it in your browser]
 ```
 
+## Usage Examples
 
+### Search and Load Hi-C Maps
 
-# API
+```
+You: "Find Hi-C maps for human K562 cells"
 
-The juicebox.init function returns a promise for a HICBrowser object.  This object exposes
-functions for interacting with the viewer including
+Claude: [Searches available data sources]
+        "I found 8 K562 cell line maps. Here are the top results..."
 
-* loadHicFile({url: urlString, name: string})
-* loadTracks([array of track configs...])
+You: "Load the first one"
 
-For a description of track configurations see the documentation for [igv.js](https://github.com/igvteam/igv.js/wiki).
-Example of a basic track configuration object:
+Claude: [Loads the map and displays it in your browser]
+```
 
-See [examples/juicebox-api.html](https://github.com/igvteam/juicebox.js/blob/master/examples/juicebox-api.html) 
-for an example of using the API to load hicfiles and tracks.
+### Navigate to Genomic Regions
 
+```
+You: "Go to the BRCA1 gene"
 
-# Development
+Claude: [Looks up BRCA1 coordinates]
+        [Navigates to chr17:43,044,295-43,125,482]
+        "I've navigated to the BRCA1 gene region. Would you like to 
+        zoom in or add any annotation tracks?"
+```
 
-## Requirements
+### Load Complementary Data
 
-Building juicebox.js requires Linux or MacOS, and  [node.js](https://nodejs.org/).
+```
+You: "Add CTCF binding sites for this cell type"
 
-Other Unix environments will probably work but have not been tested.  Windows users can use [Windows Subsystem for Linux](https://docs.microsoft.com/en-us/windows/wsl/install-win10).
+Claude: [Discovers available CTCF tracks for the loaded biosample]
+        "I found CTCF ChIP-seq data for K562 cells. Would you like 
+        the fold change track or the peak calls?"
+        
+You: "Both"
 
-## Building
+Claude: [Loads both tracks]
+        "I've added CTCF fold change and peak tracks. The peaks are 
+        shown as 2D annotations on the contact map."
+```
 
-```  
+### Configure Visualization
+
+```
+You: "Change the color scale to blue"
+
+Claude: [Updates the foreground color]
+        "I've changed the color scale to blue. The contact map now 
+        uses a blue gradient to show interaction strength."
+```
+
+### Create Shareable Links
+
+```
+You: "Create a shareable link for this visualization"
+
+Claude: [Generates a compressed session URL]
+        "Here's a shareable link: https://t.3dg.io/abc123
+        Anyone can open this link to see your current visualization 
+        with all maps, tracks, and settings."
+```
+
+## What You Can Do
+
+### 🧠 AI-Enhanced Capabilities
+
+Claude brings intelligent assistance to Hi-C exploration:
+
+- **Semantic Search**: Understands biological concepts ("heart tissue" finds related samples)
+- **Context-Aware Discovery**: Suggests complementary datasets based on what you've loaded
+- **Domain Knowledge**: Recommends appropriate normalizations, resolutions, and annotations
+- **Workflow Orchestration**: Handles multi-step processes automatically
+- **Intent Inference**: Makes sensible defaults while allowing full customization
+
+### 🔍 Data Source Integration
+
+Search across multiple Hi-C data sources:
+
+- **4DN (4D Nucleome)**: Specialized 4D nucleome projects
+- **ENCODE**: Broad cell type coverage with standardized data
+
+Claude understands metadata relationships and can help you find the right datasets for your research.
+
+### 🎨 Full Visualization Control
+
+Control every aspect of the visualization:
+
+- Load main maps and control maps for comparison
+- Navigate by gene name, coordinates, or natural language
+- Zoom in/out and pan across the genome
+- Configure color scales and normalization methods
+- Add 1D tracks (bigWig, bedGraph) and 2D annotations (loops, domains)
+- Save and restore sessions
+- Create shareable URLs
+
+## Troubleshooting
+
+### Browser Won't Connect
+
+- Make sure Claude Desktop is running
+- Verify the MCP server is installed and enabled in Claude Desktop settings
+- Try asking Claude: "Get the Juicebox URL" to get a fresh connection URL
+- Check that your browser allows WebSocket connections to `localhost`
+
+### Maps Won't Load
+
+- Verify you have an active internet connection (maps are loaded from remote URLs)
+- Check that the URL is accessible (try opening it directly in your browser)
+- Ask Claude: "Get server status" to check the connection
+
+### Claude Doesn't Recognize Commands
+
+- Make sure the MCP server is enabled in Claude Desktop settings
+- Restart Claude Desktop after installing the server
+- Check that the server appears in your MCP servers list
+
+## Building from Source
+
+If you want to build the MCP server yourself or contribute to development, see the [MCPB Build Guide](docs/mcp-notes/MCPB_BUILD_GUIDE.md) for detailed instructions.
+
+Quick build steps:
+
+```bash
 git clone https://github.com/aidenlab/juicebox-mcp.git
 cd juicebox-mcp
 npm install
-npm run build
+npm run build:mcpb
 ```
 
-This creates a dist folder with the following files
+This creates a `.mcpb` package in the project root that can be installed in Claude Desktop.
 
-* juicebox.js - ES5 compatible file.  A script include will define the "juicebox" global.
-* juicebox.min.js - minified version of juicebox.js
-* juicebox.esm.js --  ES6 module 
-* css -- folder containing required css file **juicebox.css** and associated images
+## Documentation
 
+For more detailed information:
 
-# Supported Browsers
+- **[MCP Server Tools](docs/mcp-notes/MCP_SERVER_TOOLS.md)** - Complete tool reference
+- **[LLM-Enhanced Capabilities](docs/mcp-notes/LLM_ENHANCED_CAPABILITIES.md)** - What makes AI interaction unique
+- **[Data Source AI Capabilities](docs/datasource-notes/DATA_SOURCE_AI_CAPABILITIES.md)** - How data search works
+- **[MCPB Build Guide](docs/mcp-notes/MCPB_BUILD_GUIDE.md)** - Building from source
+- **[Netlify Setup](docs/mcp-notes/NETLIFY_SETUP.md)** - Frontend deployment guide
 
-juicebox.js require a modern web browser with support for Javascript ECMAScript 2015. 
+## License
 
+MIT License - see [LICENSE](LICENSE) file for details.
 
-# Juicebox-web
+## Support
 
-For an out-of-the box web application for viewing and sharing contact maps from .hic files see
-[Juicebox-web](https://github.com/igvteam/juicebox-web), a web application embedding a juicebox.js viewer. 
+- **Issues**: Report bugs or request features on [GitHub Issues](https://github.com/aidenlab/juicebox-mcp/issues)
+- **Documentation**: See the `docs/` folder for detailed guides
 
+## Acknowledgments
 
-# License
-
-
-juicebox.js is [MIT](/LICENSE) licensed.
-
-
+Juicebox MCP Server is derived from the JavaScript version of [Juicebox.js](https://github.com/aidenlab/juicebox.js), which provides the core Hi-C visualization capabilities.
