@@ -19,6 +19,19 @@ import { logInfo, logWarn, logError } from './lib/logger.js';
 // Re-export the Durable Object class so Cloudflare can find it
 export { WebSocketRoom } from './durableObjects/WebSocketRoom.js';
 
+/**
+ * Derive a stable, opaque session ID from a vendor-specific header value
+ * using HMAC-SHA256. Avoids leaking raw tokens (e.g., x-openai-session) in URLs.
+ */
+async function deriveSessionId(value, secret) {
+  const enc = new TextEncoder();
+  const key = await crypto.subtle.importKey(
+    'raw', enc.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']
+  );
+  const sig = await crypto.subtle.sign('HMAC', key, enc.encode(value));
+  return Array.from(new Uint8Array(sig)).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
@@ -89,7 +102,8 @@ async function handleMcpRequest(request, env) {
     }
 
     const sessionId = request.headers.get('mcp-session-id');
-    logInfo(`[MCP] ${request.method} ${body?.method || 'N/A'} | mcp-session-id: ${sessionId || 'NONE'}`);
+    const openaiSession = request.headers.get('x-openai-session');
+    logInfo(`[MCP] ${request.method} ${body?.method || 'N/A'} | mcp-session-id: ${sessionId || 'NONE'} | x-openai-session: ${openaiSession ? 'present' : 'NONE'}`);
 
     // Create a new MCP server for this request
     const mcpServer = new McpServer({
@@ -118,7 +132,10 @@ async function handleMcpRequest(request, env) {
       return env.WEBSOCKET_ROOM.get(id);
     }
 
-    const effectiveSessionId = sessionId;
+    // Fallback: ChatGPT doesn't echo mcp-session-id back, but sends x-openai-session on every request.
+    // HMAC the raw token so it's not exposed in browser URLs.
+    const effectiveSessionId = sessionId ||
+      (openaiSession ? await deriveSessionId(openaiSession, env.SESSION_HMAC_SECRET || 'juicebox-mcp-session-key') : null);
 
     const deps = {
       sessionId: effectiveSessionId,
@@ -214,7 +231,7 @@ async function handleMcpRequest(request, env) {
     // For initialize responses in stateless mode, inject a session ID header
     // so MCP clients can use it for subsequent requests and WebSocket routing.
     if (isInit && !response.headers.has('mcp-session-id')) {
-      const newSessionId = crypto.randomUUID();
+      const newSessionId = effectiveSessionId || crypto.randomUUID();
       const patched = new Response(response.body, response);
       patched.headers.set('mcp-session-id', newSessionId);
       return patched;
