@@ -49,11 +49,12 @@ export class WebSocketClient {
       
       // Only auto-detect if not localhost (production deployment)
       if (hostname !== 'localhost' && hostname !== '127.0.0.1') {
-        // Try WebSocket on same domain, port 3011
-        wsUrl = `${protocol}//${hostname}:3011`;
+        // Production: WebSocket on same domain via /ws path (Cloudflare Workers)
+        wsUrl = `${protocol}//${hostname}/ws`;
       } else {
         // Development: default to localhost
         wsUrl = 'ws://localhost:3011';
+        // wsUrl = `${protocol}//${hostname}/ws`;
       }
     }
     if (this.isConnecting || (this.ws && this.ws.readyState === WebSocket.OPEN)) {
@@ -71,7 +72,13 @@ export class WebSocketClient {
     }
 
     try {
-      this.ws = new WebSocket(wsUrl);
+      // Append sessionId as query parameter for Cloudflare Workers DO routing
+      let connectUrl = wsUrl;
+      if (this.sessionId) {
+        const separator = wsUrl.includes('?') ? '&' : '?';
+        connectUrl = `${wsUrl}${separator}sessionId=${encodeURIComponent(this.sessionId)}`;
+      }
+      this.ws = new WebSocket(connectUrl);
 
       this.ws.onopen = () => {
         console.log('WebSocket connected to:', wsUrl);

@@ -17,3 +17,7 @@ dist/
 
 # Environment variables (for local testing)
 .env
+
+# Cloudflare Workers
+.wrangler/
+.history

@@ -35,7 +35,8 @@ function tinyURLShortener({endpoint, apiKey, domain}) {
             const response = await fetch(endpoint, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}`},
-                body: JSON.stringify({ url, domain: domain || 't.3dg.io' })
+                body: JSON.stringify({ url, domain: domain || 't.3dg.io' }),
+                tags: ['juicebox-mcp']
             });
 
             if (response.ok) {

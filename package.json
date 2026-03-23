@@ -28,7 +28,9 @@
     "version:sync:tag": "node scripts/sync-version-from-github.js --tag",
     "test": "vitest",
     "test:ui": "vitest --ui",
-    "test:run": "vitest run"
+    "test:run": "vitest run",
+    "dev:worker": "wrangler dev",
+    "deploy:worker": "npm run build && wrangler deploy"
   },
   "keywords": [
     "conformation capture",
@@ -48,6 +50,7 @@
     "zod": "^3.25.76"
   },
   "devDependencies": {
+    "wrangler": "^4.0.0",
     "@vitest/ui": "^4.0.15",
     "@xmldom/xmldom": "^0.8.11",
     "archiver": "^7.0.1",
