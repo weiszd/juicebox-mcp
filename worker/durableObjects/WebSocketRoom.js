@@ -134,7 +134,13 @@ export class WebSocketRoom {
     // Find a peer (any connected browser that isn't the requester)
     const peer = websockets.find(ws => ws !== requesterWs);
     if (!peer) {
-      requesterWs.send(JSON.stringify({ type: 'peerSessionData', error: 'No other browsers connected' }));
+      // No live peers — try stored session
+      const saved = await this.state.storage.get('session');
+      if (saved) {
+        requesterWs.send(JSON.stringify({ type: 'peerSessionData', compressedSession: saved }));
+      } else {
+        requesterWs.send(JSON.stringify({ type: 'peerSessionData', error: 'No session available' }));
+      }
       return;
     }
 
@@ -163,7 +169,7 @@ export class WebSocketRoom {
 
   // --- Hibernation API lifecycle methods ---
 
-  webSocketMessage(ws, message) {
+  async webSocketMessage(ws, message) {
     try {
       const data = JSON.parse(typeof message === 'string' ? message : new TextDecoder().decode(message));
 
@@ -188,6 +194,12 @@ export class WebSocketRoom {
         } else {
           pending.resolve(data);
         }
+        return;
+      }
+
+      // Auto-save: persist compressed session to DO storage
+      if (data.type === 'saveSession' && data.compressedSession) {
+        await this.state.storage.put('session', data.compressedSession);
         return;
       }
 

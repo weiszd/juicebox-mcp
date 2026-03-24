@@ -140,6 +140,9 @@ const wsClients = new Map();
 // Map to store pending session data requests (requestId -> { resolve, reject, timeout })
 const pendingSessionRequests = new Map();
 
+// Map to store auto-saved compressed sessions (sessionId -> compressedSessionString)
+const savedSessions = new Map();
+
 // State management removed - commands will simply update Juicebox without querying state
 
 // Detect if we're running in STDIO mode (subprocess) or HTTP mode
@@ -252,6 +255,9 @@ wss.on('connection', (ws) => {
           request.reject(new Error(data.error || 'Failed to get compressed session data'));
           logError(`Compressed session data error for request ${data.requestId}:`, data.error);
         }
+      } else if (data.type === 'saveSession' && data.compressedSession && sessionId) {
+        // Auto-save: persist compressed session in memory
+        savedSessions.set(sessionId, data.compressedSession);
       } else if (data.type === 'syncEvent' && sessionId) {
         // Relay sync event to all OTHER browsers in the same session
         sendToOthersInSession(sessionId, ws, data);
@@ -336,17 +342,21 @@ function hasOpenClient(sessionId) {
 // and relay the response back to the requester.
 function handlePeerSessionRequest(sessionId, requesterWs) {
   const clients = wsClients.get(sessionId);
-  if (!clients) {
-    requesterWs.send(JSON.stringify({ type: 'peerSessionData', error: 'No session clients' }));
-    return;
-  }
   // Find a peer (any open client that isn't the requester)
   let peer = null;
-  for (const ws of clients) {
-    if (ws !== requesterWs && ws.readyState === 1) { peer = ws; break; }
+  if (clients) {
+    for (const ws of clients) {
+      if (ws !== requesterWs && ws.readyState === 1) { peer = ws; break; }
+    }
   }
   if (!peer) {
-    requesterWs.send(JSON.stringify({ type: 'peerSessionData', error: 'No other browsers connected' }));
+    // No live peers — try saved session
+    const saved = savedSessions.get(sessionId);
+    if (saved) {
+      requesterWs.send(JSON.stringify({ type: 'peerSessionData', compressedSession: saved }));
+    } else {
+      requesterWs.send(JSON.stringify({ type: 'peerSessionData', error: 'No session available' }));
+    }
     return;
   }
 

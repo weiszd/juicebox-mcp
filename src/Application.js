@@ -3,6 +3,7 @@ import { WebSocketClient } from './WebSocketClient.js';
 import ColorScale from '../js/colorScale.js';
 import ContactMatrixView from '../js/contactMatrixView.js';
 import QRCode from 'qrcode';
+import { BGZip } from '../node_modules/igv-utils/src/index.js';
 
 /**
  * Main application class that orchestrates Juicebox and WebSocket communication
@@ -117,10 +118,15 @@ export class Application {
       },
       (connected) => {
         this._updateConnectionStatus(connected);
-        // On first connect, request session from a peer browser (if any)
-        if (connected && !this._hasRequestedPeerSession) {
-          this._hasRequestedPeerSession = true;
-          this._requestSessionFromPeer();
+        if (connected) {
+          // On first connect, request session from a peer browser (if any)
+          if (!this._hasRequestedPeerSession) {
+            this._hasRequestedPeerSession = true;
+            this._requestSessionFromPeer();
+          }
+          this._startAutoSave();
+        } else {
+          this._stopAutoSave();
         }
       },
       sessionId
@@ -386,22 +392,38 @@ export class Application {
   }
 
   /**
-   * Handle session data received from a peer browser.
-   * Restores the Juicebox session so this browser matches the peer.
+   * Handle session data received from a peer browser or from stored auto-save.
+   * Supports both raw JSON (sessionData) and compressed format (compressedSession).
    */
   async _handlePeerSessionData(command) {
     if (command.error) {
       console.log('No peer session available:', command.error);
       return;
     }
-    if (!command.sessionData) {
+
+    let sessionData = command.sessionData;
+    if (!sessionData && command.compressedSession) {
+      // Decompress: strip "session=blob:" prefix, then BGZip decompress
+      try {
+        const blob = command.compressedSession.startsWith('session=blob:')
+          ? command.compressedSession.substring(13)
+          : command.compressedSession;
+        sessionData = JSON.parse(BGZip.uncompressString(blob));
+      } catch (e) {
+        console.error('Error decompressing peer session:', e);
+        return;
+      }
+    }
+
+    if (!sessionData) {
       console.log('Peer returned empty session data');
       return;
     }
+
     console.log('Restoring session from peer browser');
     this._isSyncing = true;
     try {
-      await juicebox.restoreSession(this.container, command.sessionData);
+      await juicebox.restoreSession(this.container, sessionData);
       this.browser = juicebox.getCurrentBrowser();
       // Re-setup sync listeners since restoreSession may recreate the browser
       this._setupSyncEventListeners();
@@ -409,6 +431,42 @@ export class Application {
       console.error('Error restoring peer session:', error);
     } finally {
       this._isSyncing = false;
+    }
+  }
+
+  /**
+   * Start periodic auto-save of compressed session to the server.
+   */
+  _startAutoSave() {
+    if (this._autoSaveInterval) return;
+    this._lastSavedSession = null;
+    this._autoSaveInterval = setInterval(() => this._autoSaveSession(), 10000);
+  }
+
+  /**
+   * Stop auto-save timer.
+   */
+  _stopAutoSave() {
+    if (this._autoSaveInterval) {
+      clearInterval(this._autoSaveInterval);
+      this._autoSaveInterval = null;
+    }
+  }
+
+  /**
+   * Auto-save: serialize session as compressed string and send to server.
+   * Only sends if the session has changed since the last save.
+   */
+  _autoSaveSession() {
+    if (!this.browser || !this.wsClient?.isConnected()) return;
+    try {
+      const compressed = juicebox.compressedSession();
+      if (!compressed || compressed === this._lastSavedSession) return;
+      this._lastSavedSession = compressed;
+      this.wsClient.ws.send(JSON.stringify({ type: 'saveSession', compressedSession: compressed }));
+      console.log('Auto-saved session');
+    } catch (e) {
+      // No map loaded yet — nothing to save
     }
   }
 
