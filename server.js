@@ -22,6 +22,7 @@ import { parseDataSource } from './src/dataParsers.js';
 import { filterMaps } from './src/mapFilter.js';
 import { formatSearchResults, formatSearchResultsJSON } from './src/resultFormatter.js';
 import { tinyURLShortener } from './src/urlShortener.js';
+import { generateQRPng } from './src/qrPng.js';
 
 // Parse command line arguments
 function parseCommandLineArgs() {
@@ -1044,7 +1045,7 @@ mcpServer.registerTool(
   'get_juicebox_url',
   {
     title: 'Get Juicebox URL',
-    description: 'Get the URL to open in your browser to connect the Juicebox visualization app. Use this when users ask how to connect, how to open the Juicebox app, or say things like "Hello juicebox", "Open juicebox", "Show me juicebox", "Launch juicebox", etc.',
+    description: 'Get the URL to open in your browser to connect the Juicebox visualization app. Use this when users ask how to connect, how to open the Juicebox app, or say things like "Hello juicebox", "Open juicebox", "Show me juicebox", "Launch juicebox", etc. This tool returns a QR code as an image content block. Always display the QR code image to the user so they can scan it to open the session on another device.',
     inputSchema: {}
   },
   async () => {
@@ -1065,26 +1066,26 @@ mcpServer.registerTool(
     }
 
     const connectionUrl = `${BROWSER_URL}?sessionId=${sessionId}`;
-    
-    // Include diagnostic info for debugging
-    const registeredSessions = Array.from(wsClients.keys());
-    const isConnected = registeredSessions.includes(sessionId);
-    const connectionStatus = isConnected 
-      ? `✅ WebSocket client connected and registered`
-      : `⚠️  WebSocket client NOT connected`;
-    
-    const diagnosticInfo = isStdioMode 
-      ? `\n\n[Debug Info]\nMode: STDIO\nSTDIO Session ID: ${STDIO_SESSION_ID || 'not set'}\n${connectionStatus}\nRegistered WebSocket Sessions: ${registeredSessions.length > 0 ? registeredSessions.join(', ') : 'none'}\nWebSocket Server Port: ${WS_PORT}`
-      : `\n\n[Debug Info]\nMode: HTTP/SSE\nCurrent Session ID: ${sessionId}\n${connectionStatus}\nRegistered WebSocket Sessions: ${registeredSessions.length > 0 ? registeredSessions.join(', ') : 'none'}\nWebSocket Server Port: ${WS_PORT}`;
-    
-    return {
-      content: [
-        {
-          type: 'text',
-          text: `Open this URL ${connectionUrl}\n\nto launch the Juicebox visualization app.${diagnosticInfo}`
-        }
-      ]
-    };
+
+    const content = [
+      {
+        type: 'text',
+        text: `Open this URL to launch Juicebox:\n\n\`\`\`\n${connectionUrl}\n\`\`\``
+      }
+    ];
+
+    try {
+      const qrBase64 = generateQRPng(connectionUrl);
+      content.push({
+        type: 'image',
+        data: qrBase64,
+        mimeType: 'image/png'
+      });
+    } catch (e) {
+      // QR generation is best-effort
+    }
+
+    return { content };
   }
 );
 
