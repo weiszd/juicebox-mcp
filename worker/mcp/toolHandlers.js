@@ -251,6 +251,66 @@ export function registerTools(mcpServer, deps) {
     }
   );
 
+  // Well-known track presets (resolved by keyword)
+  const TRACK_PRESETS = {
+    genes: {
+      url: 'https://hgdownload.soe.ucsc.edu/goldenPath/hg38/database/ncbiRefSeqSelect.txt.gz',
+      name: 'Refseq Select',
+      color: { r: 0, g: 0, b: 0 }
+    }
+  };
+
+  // --- Tool: load_track ---
+  mcpServer.registerTool(
+    'load_track',
+    {
+      title: 'Load Track',
+      description: 'Load a 1D or 2D track into Juicebox from a URL. Supports bigWig, bigBed, bedGraph, bed, bedpe, interact, annotation, and other standard genomic track formats. The format is auto-detected from the file extension. When the user asks for a "genes" track, use the keyword "genes" as the url — it will automatically load the NCBI RefSeq Select gene track.',
+      inputSchema: {
+        url: z.string().describe('URL to the track file (e.g., bigWig, bigBed, bed, bedpe), or the keyword "genes" for the built-in gene track'),
+        name: z.string().optional().describe('Optional display name for the track'),
+        color: colorSchema.optional().describe('Optional track color as hex code (e.g., "#ff0000")')
+      }
+    },
+    async ({ url, name, color }) => {
+      const preset = TRACK_PRESETS[url.toLowerCase()];
+      const resolvedUrl = preset ? preset.url : url;
+      const resolvedName = name || (preset ? preset.name : undefined);
+      const resolvedColor = color ? hexToRgb(color) : (preset ? preset.color : undefined);
+
+      const command = { type: 'loadTrack', url: resolvedUrl, name: resolvedName };
+      if (resolvedColor) command.color = resolvedColor;
+      await sendCommand(command);
+      return { content: [{ type: 'text', text: `Loading track${resolvedName ? ` "${resolvedName}"` : ''} from ${resolvedUrl}` }] };
+    }
+  );
+
+  // --- Tool: select_normalization ---
+  mcpServer.registerTool(
+    'select_normalization',
+    {
+      title: 'Select Normalization',
+      description: 'Change the normalization method for the currently loaded Hi-C contact map. This changes the normalization in-place without reloading the map. Available normalizations: NONE (raw counts), VC (Coverage), VC_SQRT (Coverage-Sqrt), KR (Balanced / Knight-Ruiz matrix balancing), SCALE, INTER_SCALE, GW_SCALE. The user may refer to normalizations by either their internal name or their visual/spoken name.',
+      inputSchema: {
+        normalization: z.string()
+          .describe('Normalization method. Common values: NONE (raw counts), VC (Coverage), VC_SQRT (Coverage-Sqrt), KR (Balanced / Knight-Ruiz), SCALE, INTER_SCALE, GW_SCALE. The available normalizations depend on the loaded map.')
+      }
+    },
+    async ({ normalization }) => {
+      await sendCommand({ type: 'setNormalization', normalization });
+      const normNames = {
+        NONE: 'None',
+        VC: 'Coverage (VC)',
+        VC_SQRT: 'Coverage-Sqrt (VC_SQRT)',
+        KR: 'Balanced / Knight-Ruiz (KR)',
+        SCALE: 'SCALE',
+        INTER_SCALE: 'INTER_SCALE',
+        GW_SCALE: 'GW_SCALE'
+      };
+      return { content: [{ type: 'text', text: `Normalization set to ${normNames[normalization] || normalization}` }] };
+    }
+  );
+
   // --- Tool: create_shareable_url ---
   mcpServer.registerTool(
     'create_shareable_url',
@@ -401,6 +461,12 @@ Welcome! You can interact with Juicebox using natural language. Just tell me wha
 - "Set the foreground color to red"
 - "Make the background black"
 - "Use blue (#0000ff) for the map"
+
+**Change normalization (does NOT reload the map):**
+- "Switch to KR normalization" or "Use Balanced normalization"
+- "Set normalization to Coverage" or "Use VC normalization"
+- "Remove normalization" or "Set normalization to None"
+- Available: None, Coverage (VC), Coverage-Sqrt (VC_SQRT), Balanced/Knight-Ruiz (KR), SCALE, INTER_SCALE, GW_SCALE
 
 ### Working with Sessions
 

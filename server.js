@@ -515,7 +515,7 @@ mcpServer.registerTool(
     inputSchema: {
       url: z.string().url().describe('URL to the .hic file'),
       name: z.string().optional().describe('Optional name for the map'),
-      normalization: z.string().optional().describe('Normalization method (e.g., "VC", "VC_SQRT", "KR", "NONE")'),
+      normalization: z.string().optional().describe('Normalization method (e.g., "VC", "VC_SQRT", "KR", "SCALE", "INTER_SCALE", "GW_SCALE", "NONE")'),
       locus: z.string().optional().describe('Optional genomic locus (e.g., "1:1000000-2000000 1:1000000-2000000")')
     }
   },
@@ -548,7 +548,7 @@ mcpServer.registerTool(
     inputSchema: {
       url: z.string().url().describe('URL to the control .hic file'),
       name: z.string().optional().describe('Optional name for the control map'),
-      normalization: z.string().optional().describe('Normalization method (e.g., "VC", "VC_SQRT", "KR", "NONE")')
+      normalization: z.string().optional().describe('Normalization method (e.g., "VC", "VC_SQRT", "KR", "SCALE", "INTER_SCALE", "GW_SCALE", "NONE")')
     }
   },
   async ({ url, name, normalization }) => {
@@ -801,6 +801,87 @@ mcpServer.registerTool(
         {
           type: 'text',
           text: `Map background color set to ${color}`
+        }
+      ]
+    };
+  }
+);
+
+// Well-known track presets (resolved by keyword)
+const TRACK_PRESETS = {
+  genes: {
+    url: 'https://hgdownload.soe.ucsc.edu/goldenPath/hg38/database/ncbiRefSeqSelect.txt.gz',
+    name: 'Refseq Select',
+    color: { r: 0, g: 0, b: 0 }
+  }
+};
+
+// Register tool: load_track
+mcpServer.registerTool(
+  'load_track',
+  {
+    title: 'Load Track',
+    description: 'Load a 1D or 2D track into Juicebox from a URL. Supports bigWig, bigBed, bedGraph, bed, bedpe, interact, annotation, and other standard genomic track formats. The format is auto-detected from the file extension. When the user asks for a "genes" track, use the keyword "genes" as the url — it will automatically load the NCBI RefSeq Select gene track.',
+    inputSchema: {
+      url: z.string().describe('URL to the track file (e.g., bigWig, bigBed, bed, bedpe), or the keyword "genes" for the built-in gene track'),
+      name: z.string().optional().describe('Optional display name for the track'),
+      color: colorSchema.optional().describe('Optional track color as hex code (e.g., "#ff0000")')
+    }
+  },
+  async ({ url, name, color }) => {
+    // Resolve preset keywords
+    const preset = TRACK_PRESETS[url.toLowerCase()];
+    const resolvedUrl = preset ? preset.url : url;
+    const resolvedName = name || (preset ? preset.name : undefined);
+    const resolvedColor = color ? hexToRgb(color) : (preset ? preset.color : undefined);
+
+    const command = { type: 'loadTrack', url: resolvedUrl, name: resolvedName };
+    if (resolvedColor) command.color = resolvedColor;
+    routeToCurrentSession(command);
+
+    return {
+      content: [
+        {
+          type: 'text',
+          text: `Loading track${resolvedName ? ` "${resolvedName}"` : ''} from ${resolvedUrl}`
+        }
+      ]
+    };
+  }
+);
+
+// Register tool: select_normalization
+mcpServer.registerTool(
+  'select_normalization',
+  {
+    title: 'Select Normalization',
+    description: 'Change the normalization method for the currently loaded Hi-C contact map. This changes the normalization in-place without reloading the map. Available normalizations: NONE (raw counts), VC (Coverage), VC_SQRT (Coverage-Sqrt), KR (Balanced / Knight-Ruiz matrix balancing), SCALE, INTER_SCALE, GW_SCALE. The user may refer to normalizations by either their internal name or their visual/spoken name.',
+    inputSchema: {
+      normalization: z.string()
+        .describe('Normalization method. Common values: NONE (raw counts), VC (Coverage), VC_SQRT (Coverage-Sqrt), KR (Balanced / Knight-Ruiz), SCALE, INTER_SCALE, GW_SCALE. The available normalizations depend on the loaded map.')
+    }
+  },
+  async ({ normalization }) => {
+    routeToCurrentSession({
+      type: 'setNormalization',
+      normalization: normalization
+    });
+
+    const normNames = {
+      NONE: 'None',
+      VC: 'Coverage (VC)',
+      VC_SQRT: 'Coverage-Sqrt (VC_SQRT)',
+      KR: 'Balanced / Knight-Ruiz (KR)',
+      SCALE: 'SCALE',
+      INTER_SCALE: 'INTER_SCALE',
+      GW_SCALE: 'GW_SCALE'
+    };
+
+    return {
+      content: [
+        {
+          type: 'text',
+          text: `Normalization set to ${normNames[normalization] || normalization}`
         }
       ]
     };
@@ -1066,6 +1147,12 @@ Welcome! You can interact with Juicebox using natural language. Just tell me wha
 - "Make the background black"
 - "Use blue (#0000ff) for the map"
 
+**Change normalization (does NOT reload the map):**
+- "Switch to KR normalization" or "Use Balanced normalization"
+- "Set normalization to Coverage" or "Use VC normalization"
+- "Remove normalization" or "Set normalization to None"
+- Available: None, Coverage (VC), Coverage-Sqrt (VC_SQRT), Balanced/Knight-Ruiz (KR), SCALE, INTER_SCALE, GW_SCALE
+
 **Load additional tracks:**
 - "Add a gene track"
 - "Load this annotation file: [URL]"
@@ -1116,9 +1203,13 @@ You: "I want to explore Hi-C data from heart tissue"
 
 Me: I'll search for heart-related experiments, show you options, help you select files, configure normalization, and suggest relevant annotations and complementary data.
 
-You: "Load the left ventricle map with SCALE normalization"
+You: "Load the left ventricle map"
 
-Me: I'll load it with the recommended settings and offer to add gene tracks and annotations.
+Me: I'll load it and offer to add gene tracks and annotations.
+
+You: "Switch to KR normalization"
+
+Me: I'll change the normalization in-place — no need to reload the map.
 
 ## Need Help?
 

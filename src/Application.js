@@ -84,6 +84,12 @@ export class Application {
       ['getCompressedSession', async (command) => {
         await this._getCompressedSession(command);
       }],
+      ['loadTrack', async (command) => {
+        await this._loadTrack(command);
+      }],
+      ['setNormalization', (command) => {
+        this._setNormalization(command);
+      }],
       ['syncEvent', async (command) => {
         await this._handleSyncCommand(command);
       }],
@@ -743,6 +749,47 @@ export class Application {
       console.log(`Background color set to RGB(${r}, ${g}, ${b})`);
     } catch (error) {
       console.error('Error setting background color:', error);
+    }
+  }
+
+  /**
+   * Load a track
+   */
+  async _loadTrack(command) {
+    if (!this.browser) {
+      console.error('Browser not initialized');
+      return;
+    }
+
+    try {
+      const config = { url: command.url };
+      if (command.name) config.name = command.name;
+      if (command.color) {
+        const { r, g, b } = command.color;
+        config.color = `rgb(${r},${g},${b})`;
+      }
+      await this.browser.loadTracks([config]);
+      console.log(`Track loaded: ${command.url}`);
+    } catch (error) {
+      console.error('Error loading track:', error);
+    }
+  }
+
+  /**
+   * Set normalization method on the current map (without reloading)
+   */
+  _setNormalization(command) {
+    if (!this.browser) {
+      console.error('Browser not initialized');
+      return;
+    }
+
+    try {
+      this.browser.setNormalization(command.normalization);
+      this.browser.notifyNormalizationExternalChange(command.normalization);
+      console.log(`Normalization set to ${command.normalization}`);
+    } catch (error) {
+      console.error('Error setting normalization:', error);
     }
   }
 
