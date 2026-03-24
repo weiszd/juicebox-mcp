@@ -53,8 +53,8 @@ export class WebSocketClient {
         wsUrl = `${protocol}//${hostname}/ws`;
       } else {
         // Development: default to localhost
-        wsUrl = 'ws://localhost:3011';
-        // wsUrl = `${protocol}//${hostname}/ws`;
+        //wsUrl = 'ws://localhost:3011';
+        wsUrl = `${protocol}//${hostname}/ws`;
       }
     }
     if (this.isConnecting || (this.ws && this.ws.readyState === WebSocket.OPEN)) {

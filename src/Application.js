@@ -308,6 +308,9 @@ export class Application {
 
         case 'normalizationChange':
           this.browser.setNormalization(command.normalization);
+          // Also update the dropdown selector text (setNormalization only updates the map,
+          // not the widget, since it assumes the widget initiated the change)
+          this.browser.notifyNormalizationExternalChange(command.normalization);
           break;
 
         case 'displayModeChange':

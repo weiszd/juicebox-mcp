@@ -31,7 +31,7 @@ tag = "v1"
 new_classes = ["WebSocketRoom"]
 
 [vars]
-BROWSER_URL = "https://jbmcp.3dg.io"
+# BROWSER_URL = "https://jbmcp.3dg.io"
 TINYURL_DOMAIN = "t.3dg.io"
 TINYURL_ENDPOINT = "https://api.tinyurl.com/create"
 

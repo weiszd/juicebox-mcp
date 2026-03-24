@@ -29,7 +29,7 @@
     "test": "vitest",
     "test:ui": "vitest --ui",
     "test:run": "vitest run",
-    "dev:worker": "wrangler dev",
+    "dev:worker": "VITE_WS_URL=ws://localhost:8787/ws npm run build && wrangler dev",
     "deploy:worker": "npm run build && wrangler deploy"
   },
   "keywords": [
