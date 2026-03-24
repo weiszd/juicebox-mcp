@@ -142,6 +142,34 @@
             height: calc(100vh - 60px);
             overflow: auto;
         }
+
+        #qr-code {
+            display: none;
+            position: fixed;
+            bottom: 16px;
+            right: 16px;
+            width: 100px;
+            height: 100px;
+            z-index: 900;
+            opacity: 0.7;
+            transition: opacity 0.2s, width 0.2s, height 0.2s;
+            cursor: pointer;
+        }
+
+        #qr-code:hover {
+            opacity: 1;
+            width: 160px;
+            height: 160px;
+        }
+
+        #qr-code svg {
+            width: 100%;
+            height: 100%;
+        }
+
+        @media (max-width: 768px), (hover: none) {
+            #qr-code { display: none !important; }
+        }
     </style>
 </head>
 <body>
@@ -158,6 +186,8 @@
     <div id="tool-notification" class="hidden">
         <div class="tool-notification-label"></div>
     </div>
+
+    <div id="qr-code" title="Scan to open this session"></div>
 
     <div id="app-container"></div>
 

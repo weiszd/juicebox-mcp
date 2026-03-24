@@ -2,6 +2,7 @@ import juicebox from '../js/index.js';
 import { WebSocketClient } from './WebSocketClient.js';
 import ColorScale from '../js/colorScale.js';
 import ContactMatrixView from '../js/contactMatrixView.js';
+import QRCode from 'qrcode';
 
 /**
  * Main application class that orchestrates Juicebox and WebSocket communication
@@ -118,6 +119,9 @@ export class Application {
 
     // Set up sync event listeners to capture user interactions
     this._setupSyncEventListeners();
+
+    // Show QR code for the session URL
+    this._showSessionQRCode();
   }
 
   /**
@@ -358,6 +362,28 @@ export class Application {
         statusElement.classList.add('disconnected');
         labelElement.textContent = 'disconnected';
       }
+    }
+  }
+
+  /**
+   * Show a QR code linking to the current session URL.
+   * Renders into the #qr-code element if present.
+   */
+  async _showSessionQRCode() {
+    const container = document.getElementById('qr-code');
+    if (!container) return;
+
+    try {
+      const svg = await QRCode.toString(window.location.href, {
+        type: 'svg',
+        width: 160,
+        margin: 0,
+        color: { dark: '#333', light: '#0000' } // transparent background
+      });
+      container.innerHTML = svg;
+      container.style.display = 'block';
+    } catch (error) {
+      console.error('Error generating QR code:', error);
     }
   }
 
