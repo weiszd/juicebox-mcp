@@ -125,6 +125,42 @@ export class WebSocketRoom {
     }
   }
 
+  /**
+   * Handle a peer session request: ask another connected browser for its session
+   * and relay the response back to the requesting browser.
+   */
+  async handlePeerSessionRequest(requesterWs) {
+    const websockets = this.state.getWebSockets();
+    // Find a peer (any connected browser that isn't the requester)
+    const peer = websockets.find(ws => ws !== requesterWs);
+    if (!peer) {
+      requesterWs.send(JSON.stringify({ type: 'peerSessionData', error: 'No other browsers connected' }));
+      return;
+    }
+
+    const requestId = crypto.randomUUID();
+
+    const dataPromise = new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.pendingRequests.delete(requestId);
+        reject(new Error('Timeout waiting for peer session data'));
+      }, 15000);
+      this.pendingRequests.set(requestId, {
+        resolve, reject, timer,
+        responseType: 'sessionData',
+        errorType: 'sessionDataError'
+      });
+    });
+
+    try {
+      peer.send(JSON.stringify({ type: 'getSession', requestId }));
+      const sessionData = await dataPromise;
+      requesterWs.send(JSON.stringify({ type: 'peerSessionData', sessionData }));
+    } catch (error) {
+      requesterWs.send(JSON.stringify({ type: 'peerSessionData', error: error.message }));
+    }
+  }
+
   // --- Hibernation API lifecycle methods ---
 
   webSocketMessage(ws, message) {
@@ -152,6 +188,12 @@ export class WebSocketRoom {
         } else {
           pending.resolve(data);
         }
+        return;
+      }
+
+      // Late joiner: request session state from a peer browser
+      if (data.type === 'requestSessionFromPeer') {
+        this.handlePeerSessionRequest(ws);
         return;
       }
 

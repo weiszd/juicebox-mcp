@@ -85,6 +85,9 @@ export class Application {
       }],
       ['syncEvent', async (command) => {
         await this._handleSyncCommand(command);
+      }],
+      ['peerSessionData', async (command) => {
+        await this._handlePeerSessionData(command);
       }]
     ]);
   }
@@ -106,12 +109,19 @@ export class Application {
 
     console.log(`Initializing WebSocket client with session ID: ${sessionId}`);
 
+    this._hasRequestedPeerSession = false;
+
     this.wsClient = new WebSocketClient(
       (command) => {
         this._handleWebSocketCommand(command);
       },
       (connected) => {
         this._updateConnectionStatus(connected);
+        // On first connect, request session from a peer browser (if any)
+        if (connected && !this._hasRequestedPeerSession) {
+          this._hasRequestedPeerSession = true;
+          this._requestSessionFromPeer();
+        }
       },
       sessionId
     );
@@ -362,6 +372,43 @@ export class Application {
         statusElement.classList.add('disconnected');
         labelElement.textContent = 'disconnected';
       }
+    }
+  }
+
+  /**
+   * Request the current session state from a peer browser in the same session.
+   * Called once on first WebSocket connect to sync late joiners.
+   */
+  _requestSessionFromPeer() {
+    if (!this.wsClient || !this.wsClient.isConnected()) return;
+    console.log('Requesting session from peer browser...');
+    this.wsClient.ws.send(JSON.stringify({ type: 'requestSessionFromPeer' }));
+  }
+
+  /**
+   * Handle session data received from a peer browser.
+   * Restores the Juicebox session so this browser matches the peer.
+   */
+  async _handlePeerSessionData(command) {
+    if (command.error) {
+      console.log('No peer session available:', command.error);
+      return;
+    }
+    if (!command.sessionData) {
+      console.log('Peer returned empty session data');
+      return;
+    }
+    console.log('Restoring session from peer browser');
+    this._isSyncing = true;
+    try {
+      await juicebox.restoreSession(this.container, command.sessionData);
+      this.browser = juicebox.getCurrentBrowser();
+      // Re-setup sync listeners since restoreSession may recreate the browser
+      this._setupSyncEventListeners();
+    } catch (error) {
+      console.error('Error restoring peer session:', error);
+    } finally {
+      this._isSyncing = false;
     }
   }
 

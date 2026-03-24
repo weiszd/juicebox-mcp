@@ -255,6 +255,9 @@ wss.on('connection', (ws) => {
       } else if (data.type === 'syncEvent' && sessionId) {
         // Relay sync event to all OTHER browsers in the same session
         sendToOthersInSession(sessionId, ws, data);
+      } else if (data.type === 'requestSessionFromPeer' && sessionId) {
+        // Late joiner: request session from a peer browser
+        handlePeerSessionRequest(sessionId, ws);
       } else if (sessionId) {
         // Handle other messages (for testing/debugging)
         logInfo(`Received message from client (session ${sessionId}):`, data.type || 'unknown');
@@ -327,6 +330,51 @@ function hasOpenClient(sessionId) {
     if (ws.readyState === 1) return true;
   }
   return false;
+}
+
+// Handle a late-joiner peer session request: ask another browser for its session
+// and relay the response back to the requester.
+function handlePeerSessionRequest(sessionId, requesterWs) {
+  const clients = wsClients.get(sessionId);
+  if (!clients) {
+    requesterWs.send(JSON.stringify({ type: 'peerSessionData', error: 'No session clients' }));
+    return;
+  }
+  // Find a peer (any open client that isn't the requester)
+  let peer = null;
+  for (const ws of clients) {
+    if (ws !== requesterWs && ws.readyState === 1) { peer = ws; break; }
+  }
+  if (!peer) {
+    requesterWs.send(JSON.stringify({ type: 'peerSessionData', error: 'No other browsers connected' }));
+    return;
+  }
+
+  const requestId = randomUUID();
+  const timeout = setTimeout(() => {
+    pendingSessionRequests.delete(requestId);
+    try {
+      requesterWs.send(JSON.stringify({ type: 'peerSessionData', error: 'Timeout waiting for peer' }));
+    } catch (e) { /* requester may have disconnected */ }
+  }, 15000);
+
+  pendingSessionRequests.set(requestId, {
+    resolve: (sessionData) => {
+      clearTimeout(timeout);
+      try {
+        requesterWs.send(JSON.stringify({ type: 'peerSessionData', sessionData }));
+      } catch (e) { /* requester may have disconnected */ }
+    },
+    reject: (error) => {
+      clearTimeout(timeout);
+      try {
+        requesterWs.send(JSON.stringify({ type: 'peerSessionData', error: error.message }));
+      } catch (e) { /* requester may have disconnected */ }
+    },
+    timeout
+  });
+
+  peer.send(JSON.stringify({ type: 'getSession', requestId }));
 }
 
 // State query functions removed - we don't query or cache state
