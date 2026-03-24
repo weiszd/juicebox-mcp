@@ -155,6 +155,18 @@ export class WebSocketRoom {
         return;
       }
 
+      // Sync events: relay to all OTHER browsers in the same session
+      if (data.type === 'syncEvent') {
+        const websockets = this.state.getWebSockets();
+        const msg = JSON.stringify(data);
+        for (const other of websockets) {
+          if (other !== ws) {
+            try { other.send(msg); } catch (e) { /* connection may be closing */ }
+          }
+        }
+        return;
+      }
+
       // Other messages are ignored (browser might send debug info, etc.)
     } catch (error) {
       console.error('Error parsing WebSocket message:', error);

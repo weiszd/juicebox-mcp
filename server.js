@@ -134,7 +134,7 @@ function logInfo(...args) {
 }
 
 // Store connected WebSocket clients by session ID
-// Map<sessionId, WebSocket>
+// Map<sessionId, Set<WebSocket>> — multiple browsers can share a session
 const wsClients = new Map();
 
 // Map to store pending session data requests (requestId -> { resolve, reject, timeout })
@@ -201,8 +201,11 @@ wss.on('connection', (ws) => {
       // First message should be session registration
       if (data.type === 'registerSession' && data.sessionId) {
         sessionId = data.sessionId;
-        wsClients.set(sessionId, ws);
-        logInfo(`Browser client registered with session ID: ${sessionId}`);
+        if (!wsClients.has(sessionId)) {
+          wsClients.set(sessionId, new Set());
+        }
+        wsClients.get(sessionId).add(ws);
+        logInfo(`Browser client registered with session ID: ${sessionId} (${wsClients.get(sessionId).size} client(s))`);
         
         // Send confirmation
         ws.send(JSON.stringify({
@@ -249,6 +252,9 @@ wss.on('connection', (ws) => {
           request.reject(new Error(data.error || 'Failed to get compressed session data'));
           logError(`Compressed session data error for request ${data.requestId}:`, data.error);
         }
+      } else if (data.type === 'syncEvent' && sessionId) {
+        // Relay sync event to all OTHER browsers in the same session
+        sendToOthersInSession(sessionId, ws, data);
       } else if (sessionId) {
         // Handle other messages (for testing/debugging)
         logInfo(`Received message from client (session ${sessionId}):`, data.type || 'unknown');
@@ -265,9 +271,13 @@ wss.on('connection', (ws) => {
   });
 
   ws.on('close', () => {
-    if (sessionId) {
-      logInfo(`Browser client disconnected (session: ${sessionId})`);
-      wsClients.delete(sessionId);
+    if (sessionId && wsClients.has(sessionId)) {
+      wsClients.get(sessionId).delete(ws);
+      const remaining = wsClients.get(sessionId).size;
+      if (remaining === 0) {
+        wsClients.delete(sessionId);
+      }
+      logInfo(`Browser client disconnected (session: ${sessionId}, ${remaining} remaining)`);
     } else {
       logInfo('Browser client disconnected (unregistered)');
     }
@@ -275,23 +285,48 @@ wss.on('connection', (ws) => {
 
 });
 
-// Send command to a specific session's browser client
+// Send command to all browser clients in a session
 function sendToSession(sessionId, command) {
-  const ws = wsClients.get(sessionId);
-  if (ws && ws.readyState === 1) { // WebSocket.OPEN
-    const message = JSON.stringify(command);
-    try {
-      ws.send(message);
-      logInfo(`Command sent to session ${sessionId}: ${command.type}`);
-      return true;
-    } catch (error) {
-      logError(`Error sending WebSocket message to session ${sessionId}: ${error.message}`);
-      return false;
-    }
-  } else {
+  const clients = wsClients.get(sessionId);
+  if (!clients || clients.size === 0) {
     logWarn(`No active WebSocket connection for session: ${sessionId} (available: ${Array.from(wsClients.keys()).join(', ') || 'none'})`);
     return false;
   }
+  const message = JSON.stringify(command);
+  let sent = 0;
+  for (const ws of clients) {
+    if (ws.readyState === 1) {
+      try { ws.send(message); sent++; } catch (error) {
+        logError(`Error sending WebSocket message to session ${sessionId}: ${error.message}`);
+      }
+    }
+  }
+  if (sent > 0) {
+    logInfo(`Command sent to session ${sessionId}: ${command.type} (${sent} client(s))`);
+  }
+  return sent > 0;
+}
+
+// Send command to all OTHER browser clients in a session (exclude sender)
+function sendToOthersInSession(sessionId, senderWs, command) {
+  const clients = wsClients.get(sessionId);
+  if (!clients) return;
+  const message = JSON.stringify(command);
+  for (const ws of clients) {
+    if (ws !== senderWs && ws.readyState === 1) {
+      try { ws.send(message); } catch (e) { /* connection may be closing */ }
+    }
+  }
+}
+
+// Check if a session has at least one open WebSocket client
+function hasOpenClient(sessionId) {
+  const clients = wsClients.get(sessionId);
+  if (!clients) return false;
+  for (const ws of clients) {
+    if (ws.readyState === 1) return true;
+  }
+  return false;
 }
 
 // State query functions removed - we don't query or cache state
@@ -337,11 +372,13 @@ function routeToCurrentSession(command) {
 // Broadcast command to all connected browser clients (kept for backward compatibility if needed)
 function broadcastToClients(command) {
   const message = JSON.stringify(command);
-  wsClients.forEach((client, sessionId) => {
-    if (client.readyState === 1) { // WebSocket.OPEN
-      client.send(message);
+  for (const [, clients] of wsClients) {
+    for (const ws of clients) {
+      if (ws.readyState === 1) {
+        try { ws.send(message); } catch (e) { /* ignore */ }
+      }
     }
-  });
+  }
 }
 
 // Create MCP server
@@ -736,8 +773,8 @@ mcpServer.registerTool(
 
     // Check if browser is connected
     const hasConnection = sessionId 
-      ? (wsClients.has(sessionId) && wsClients.get(sessionId).readyState === 1)
-      : (isStdioMode && STDIO_SESSION_ID && wsClients.has(STDIO_SESSION_ID));
+      ? (hasOpenClient(sessionId))
+      : (isStdioMode && STDIO_SESSION_ID && hasOpenClient(STDIO_SESSION_ID));
     
     if (!hasConnection) {
       return {
@@ -819,19 +856,22 @@ mcpServer.registerTool(
     
     // Check WebSocket connection states
     const wsConnectionStates = {};
-    wsClients.forEach((ws, sid) => {
-      wsConnectionStates[sid] = {
-        readyState: ws.readyState,
-        readyStateName: ws.readyState === 0 ? 'CONNECTING' : ws.readyState === 1 ? 'OPEN' : ws.readyState === 2 ? 'CLOSING' : 'CLOSED'
-      };
-    });
-    
+    let totalClients = 0;
+    for (const [sid, clients] of wsClients) {
+      const states = [];
+      for (const ws of clients) {
+        states.push(ws.readyState === 0 ? 'CONNECTING' : ws.readyState === 1 ? 'OPEN' : ws.readyState === 2 ? 'CLOSING' : 'CLOSED');
+        totalClients++;
+      }
+      wsConnectionStates[sid] = { count: clients.size, states };
+    }
+
     const statusInfo = {
       mode: isStdioMode ? 'STDIO' : 'HTTP/SSE',
       currentSessionId: sessionId || 'none',
       stdioSessionId: STDIO_SESSION_ID || 'not set',
       webSocketServerPort: WS_PORT,
-      webSocketClientsConnected: wsClients.size,
+      webSocketClientsConnected: totalClients,
       registeredSessionIds: registeredSessions,
       currentSessionConnected: isConnected,
       webSocketConnectionStates: wsConnectionStates,
@@ -1631,8 +1671,8 @@ mcpServer.registerTool(
       
       // Check if browser is connected
       const hasConnection = sessionId 
-        ? (wsClients.has(sessionId) && wsClients.get(sessionId).readyState === 1)
-        : (isStdioMode && STDIO_SESSION_ID && wsClients.has(STDIO_SESSION_ID));
+        ? (hasOpenClient(sessionId))
+        : (isStdioMode && STDIO_SESSION_ID && hasOpenClient(STDIO_SESSION_ID));
       
       if (!hasConnection) {
         return {

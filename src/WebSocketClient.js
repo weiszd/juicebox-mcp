@@ -244,5 +244,21 @@ export class WebSocketClient {
   isConnected() {
     return this.ws && this.ws.readyState === WebSocket.OPEN;
   }
+
+  /**
+   * Send a sync event to the server for relay to other browsers in the same session.
+   * @param {string} syncType - The type of sync event (e.g., 'locusChange', 'colorScaleChange')
+   * @param {Object} payload - The sync payload data
+   */
+  sendSyncEvent(syncType, payload) {
+    if (!this.isConnected()) return;
+    try {
+      const message = { type: 'syncEvent', syncType, ...payload };
+      console.log('Sending sync event:', message);
+      this.ws.send(JSON.stringify(message));
+    } catch (error) {
+      console.error('Error sending sync event:', error);
+    }
+  }
 }
 

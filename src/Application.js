@@ -11,13 +11,18 @@ export class Application {
     this.container = container;
     this.config = config;
     this.browser = null;
-    
+
+    // Sync state: true when applying a sync event from another browser (prevents re-broadcast)
+    this._isSyncing = false;
+    this._locusSyncTimeout = null;
+    this._lastLocusSyncTime = 0;
+
     // Initialize command handler map
     this._initCommandHandlers();
-    
+
     // Initialize Juicebox
     await this._initJuicebox(config);
-    
+
     // Set up WebSocket connection
     this._setupWebSocket();
   }
@@ -31,7 +36,7 @@ export class Application {
       backgroundColor: '255,255,255',
       ...config
     };
-    
+
     // Initialize Juicebox
     await juicebox.init(this.container, defaultConfig);
     // Get the browser instance after initialization
@@ -76,6 +81,9 @@ export class Application {
       }],
       ['getCompressedSession', async (command) => {
         await this._getCompressedSession(command);
+      }],
+      ['syncEvent', async (command) => {
+        await this._handleSyncCommand(command);
       }]
     ]);
   }
@@ -87,16 +95,16 @@ export class Application {
     // Extract session ID from URL query parameters
     const urlParams = new URLSearchParams(window.location.search);
     const sessionId = urlParams.get('sessionId');
-    
+
     if (!sessionId) {
       // No session ID provided - app can run but without MCP connection
       console.log('No sessionId found in URL. App running in standalone mode (no MCP connection).');
       this._updateConnectionStatus(false, 'not-connected');
       return;
     }
-    
+
     console.log(`Initializing WebSocket client with session ID: ${sessionId}`);
-    
+
     this.wsClient = new WebSocketClient(
       (command) => {
         this._handleWebSocketCommand(command);
@@ -107,6 +115,219 @@ export class Application {
       sessionId
     );
     this.wsClient.connect();
+
+    // Set up sync event listeners to capture user interactions
+    this._setupSyncEventListeners();
+  }
+
+  /**
+   * Set up listeners on the Juicebox browser to capture user interactions
+   * and broadcast them as sync events to other browsers in the same session.
+   */
+  _setupSyncEventListeners() {
+    if (!this.browser || !this.wsClient) return;
+
+    const browser = this.browser;
+
+    // 1. LOCUS CHANGE — navigation, zoom, pan
+    // Wrap notifyLocusChange to detect all locus changes
+    const originalNotifyLocusChange = browser.notifyLocusChange.bind(browser);
+    browser.notifyLocusChange = (eventData) => {
+      originalNotifyLocusChange(eventData);
+      if (!this._isSyncing) {
+        if (eventData.dragging) {
+          this._throttledSendLocusSync();
+        } else {
+          this._debouncedSendLocusSync();
+        }
+      }
+    };
+
+    // 2. COLOR SCALE changes (full replacement, e.g. auto-computed on map load)
+    const originalNotifyColorScale = browser.notifyColorScale.bind(browser);
+    browser.notifyColorScale = (colorScale) => {
+      originalNotifyColorScale(colorScale);
+      if (!this._isSyncing && this.wsClient) {
+        this._sendColorScaleSync();
+      }
+    };
+
+    // 3. THRESHOLD changes (increase/decrease buttons, text input)
+    const originalSetColorScaleThreshold = browser.setColorScaleThreshold.bind(browser);
+    browser.setColorScaleThreshold = (threshold) => {
+      originalSetColorScaleThreshold(threshold);
+      if (!this._isSyncing && this.wsClient) {
+        this._sendColorScaleSync();
+      }
+    };
+
+    // 4. FOREGROUND COLOR changes (color picker → setColorComponents + repaintMatrix)
+    const originalRepaintMatrix = browser.repaintMatrix.bind(browser);
+    browser.repaintMatrix = () => {
+      originalRepaintMatrix();
+      if (!this._isSyncing && this.wsClient) {
+        this._sendColorScaleSync();
+      }
+    };
+
+    // 5. BACKGROUND COLOR changes (color picker)
+    const cmv = browser.contactMatrixView;
+    const originalSetBackgroundColor = cmv.setBackgroundColor.bind(cmv);
+    cmv.setBackgroundColor = (rgb) => {
+      originalSetBackgroundColor(rgb);
+      if (!this._isSyncing && this.wsClient) {
+        this.wsClient.sendSyncEvent('backgroundColorChange', { color: rgb });
+      }
+    };
+
+    // 6. NORMALIZATION changes
+    const originalSetNormalization = browser.setNormalization.bind(browser);
+    browser.setNormalization = (normalization) => {
+      originalSetNormalization(normalization);
+      if (!this._isSyncing && this.wsClient) {
+        this.wsClient.sendSyncEvent('normalizationChange', { normalization });
+      }
+    };
+
+    // 4. DISPLAY MODE changes
+    const originalSetDisplayMode = browser.setDisplayMode.bind(browser);
+    browser.setDisplayMode = async (mode) => {
+      await originalSetDisplayMode(mode);
+      if (!this._isSyncing && this.wsClient) {
+        this.wsClient.sendSyncEvent('displayModeChange', { displayMode: mode });
+      }
+    };
+  }
+
+  /**
+   * Send the current color scale state as a sync event.
+   * Handles both ColorScale (A/B modes) and RatioColorScale (AOB/BOA modes).
+   */
+  _sendColorScaleSync() {
+    if (!this.browser || !this.wsClient) return;
+    const colorScale = this.browser.getColorScale();
+    if (!colorScale) return;
+
+    const payload = { threshold: colorScale.getThreshold() };
+
+    if (colorScale.positiveScale) {
+      // RatioColorScale (AOB/BOA mode)
+      payload.isRatio = true;
+      payload.positive = colorScale.positiveScale.getColorComponents();
+      payload.negative = colorScale.negativeScale.getColorComponents();
+    } else {
+      // Plain ColorScale (A/B mode)
+      payload.r = colorScale.r;
+      payload.g = colorScale.g;
+      payload.b = colorScale.b;
+    }
+
+    this.wsClient.sendSyncEvent('colorScaleChange', payload);
+  }
+
+  /**
+   * Send the current locus state as a sync event (immediate).
+   */
+  _sendLocusSyncEvent() {
+    if (!this.browser || !this.wsClient) return;
+    const syncState = this.browser.getSyncState();
+    if (!syncState) return;
+    this.wsClient.sendSyncEvent('locusChange', { syncState });
+  }
+
+  /**
+   * Debounced locus sync for discrete events (zoom clicks, goto).
+   */
+  _debouncedSendLocusSync() {
+    if (this._locusSyncTimeout) {
+      clearTimeout(this._locusSyncTimeout);
+    }
+    this._locusSyncTimeout = setTimeout(() => {
+      this._sendLocusSyncEvent();
+      this._locusSyncTimeout = null;
+    }, 100);
+  }
+
+  /**
+   * Throttled locus sync for continuous events (dragging).
+   */
+  _throttledSendLocusSync() {
+    const now = Date.now();
+    if (now - this._lastLocusSyncTime >= 150) {
+      this._sendLocusSyncEvent();
+      this._lastLocusSyncTime = now;
+    }
+  }
+
+  /**
+   * Handle incoming sync commands from other browsers.
+   * Applies the state change WITHOUT re-broadcasting (via _isSyncing flag).
+   */
+  async _handleSyncCommand(command) {
+    if (!this.browser) return;
+
+    this._isSyncing = true;
+    try {
+      switch (command.syncType) {
+        case 'locusChange':
+          // Use existing syncState() which calls update(false) — no re-propagation
+          await this.browser.syncState(command.syncState);
+          break;
+
+        case 'colorScaleChange': {
+          if (command.isRatio) {
+            // RatioColorScale (AOB/BOA mode) — update existing scale in place
+            const ratioScale = this.browser.getColorScale();
+            if (ratioScale && ratioScale.positiveScale) {
+              ratioScale.setThreshold(command.threshold);
+              ratioScale.positiveScale.setColorComponents(command.positive);
+              ratioScale.negativeScale.setColorComponents(command.negative);
+              this.browser.notifyColorScale(ratioScale);
+              this.browser.repaintMatrix();
+            }
+          } else {
+            // Plain ColorScale (A/B mode)
+            const colorScale = new ColorScale({
+              threshold: command.threshold,
+              r: command.r,
+              g: command.g,
+              b: command.b
+            });
+            this.browser.contactMatrixView.setColorScale(colorScale);
+            this.browser.notifyColorScale(colorScale);
+            this.browser.repaintMatrix();
+          }
+          break;
+        }
+
+        case 'backgroundColorChange': {
+          const { r, g, b } = command.color;
+          this.browser.contactMatrixView.setBackgroundColor({ r, g, b });
+          break;
+        }
+
+        case 'normalizationChange':
+          this.browser.setNormalization(command.normalization);
+          break;
+
+        case 'displayModeChange':
+          await this.browser.setDisplayMode(command.displayMode);
+          break;
+
+        case 'mapLoad':
+          await this._loadMap(command);
+          break;
+
+        case 'controlMapLoad':
+          await this._loadControlMap(command);
+          break;
+
+        default:
+          console.warn('Unknown sync type:', command.syncType);
+      }
+    } finally {
+      this._isSyncing = false;
+    }
   }
 
   /**
@@ -115,10 +336,10 @@ export class Application {
   _updateConnectionStatus(connected, statusType = 'disconnected') {
     const statusElement = document.getElementById('ws-status');
     if (!statusElement) return;
-    
+
     const labelElement = statusElement.querySelector('.ws-status-label');
     if (!labelElement) return;
-    
+
     if (connected) {
       statusElement.classList.remove('disconnected', 'not-connected');
       statusElement.classList.add('connected');
@@ -162,25 +383,25 @@ export class Application {
       .split('_')
       .map(word => word.charAt(0).toUpperCase() + word.slice(1))
       .join(' ');
-    
+
     const notificationElement = document.getElementById('tool-notification');
     if (!notificationElement) return;
-    
+
     const labelElement = notificationElement.querySelector('.tool-notification-label');
     if (!labelElement) return;
-    
+
     // Clear any existing timeout
     if (this._toolNotificationTimeout) {
       clearTimeout(this._toolNotificationTimeout);
       this._toolNotificationTimeout = null;
     }
-    
+
     labelElement.textContent = formattedName;
-    
+
     // Show notification with animation
     notificationElement.classList.remove('hidden');
     notificationElement.classList.add('visible');
-    
+
     // Hide after 3 seconds
     this._toolNotificationTimeout = setTimeout(() => {
       notificationElement.classList.remove('visible');
@@ -208,7 +429,7 @@ export class Application {
     try {
       await this.browser.loadHicFile(config);
       console.log(`Map loaded: ${command.url}`);
-      
+
       // If both contact map and control map are loaded, set display mode to AOB
       await this._ensureAOBModeWhenBothMapsLoaded();
     } catch (error) {
@@ -235,7 +456,7 @@ export class Application {
       // Load control map using the dedicated method
       await this.browser.loadHicControlFile(config);
       console.log(`Control map loaded: ${command.url}`);
-      
+
       // If both contact map and control map are loaded, set display mode to AOB
       await this._ensureAOBModeWhenBothMapsLoaded();
     } catch (error) {
@@ -254,7 +475,7 @@ export class Application {
 
     try {
       let sessionData = command.sessionData;
-      
+
       // If sessionUrl is provided, load it
       if (command.sessionUrl) {
         const response = await fetch(command.sessionUrl);
@@ -284,7 +505,7 @@ export class Application {
     try {
       const centerX = command.centerX;
       const centerY = command.centerY;
-      
+
       // Use zoomAndCenter with direction > 0 for zoom in
       await this.browser.interactions.zoomAndCenter(1, centerX, centerY);
       console.log('Zoomed in');
@@ -305,7 +526,7 @@ export class Application {
     try {
       const centerX = command.centerX;
       const centerY = command.centerY;
-      
+
       // Use zoomAndCenter with direction < 0 for zoom out
       await this.browser.interactions.zoomAndCenter(-1, centerX, centerY);
       console.log('Zoomed out');
@@ -325,7 +546,7 @@ export class Application {
 
     try {
       const locus = command.locus;
-      
+
       if (!locus) {
         console.error('No locus specified');
         return;
@@ -351,7 +572,7 @@ export class Application {
     try {
       const { r, g, b } = command.color;
       const threshold = command.threshold || 2000; // Default threshold
-      
+
       // Create color scale
       const colorScale = new ColorScale({
         threshold: threshold,
@@ -359,11 +580,11 @@ export class Application {
         g: g,
         b: b
       });
-      
+
       // Set color scale on contact matrix view
       this.browser.contactMatrixView.setColorScale(colorScale);
       this.browser.notifyColorScale(colorScale);
-      
+
       console.log(`Foreground color set to RGB(${r}, ${g}, ${b}) with threshold ${threshold}`);
     } catch (error) {
       console.error('Error setting foreground color:', error);
@@ -381,10 +602,10 @@ export class Application {
 
     try {
       const { r, g, b } = command.color;
-      
+
       // Set background color on contact matrix view
       this.browser.contactMatrixView.setBackgroundColor({ r, g, b });
-      
+
       console.log(`Background color set to RGB(${r}, ${g}, ${b})`);
     } catch (error) {
       console.error('Error setting background color:', error);
@@ -398,7 +619,7 @@ export class Application {
     try {
       // Import juicebox to access toJSON
       const sessionData = juicebox.toJSON();
-      
+
       // Send session data back to server via WebSocket
       if (this.wsClient && this.wsClient.isConnected() && this.wsClient.ws) {
         this.wsClient.ws.send(JSON.stringify({
@@ -430,7 +651,7 @@ export class Application {
     try {
       // Import juicebox to access compressedSession
       const compressedSessionString = juicebox.compressedSession();
-      
+
       // Send compressed session string back to server via WebSocket
       if (this.wsClient && this.wsClient.isConnected() && this.wsClient.ws) {
         this.wsClient.ws.send(JSON.stringify({
@@ -481,7 +702,4 @@ export class Application {
       console.error('Error ensuring AOB mode:', error);
     }
   }
-
-  // State management removed - commands simply update Juicebox without querying state
 }
-
