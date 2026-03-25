@@ -426,6 +426,24 @@ export class Application {
       return;
     }
 
+    // Ensure sessionData is a parsed object (not a JSON string)
+    if (typeof sessionData === 'string') {
+      try {
+        sessionData = JSON.parse(sessionData);
+      } catch (e) {
+        console.error('Invalid peer session data (not valid JSON):', e);
+        return;
+      }
+    }
+
+    // Validate the session has at least one browser with a URL
+    const browsers = sessionData.browsers || [];
+    const hasLoadedMap = browsers.some(b => b.url || b.dataset);
+    if (!hasLoadedMap) {
+      console.log('Peer session has no loaded maps, skipping restore');
+      return;
+    }
+
     console.log('Restoring session from peer browser');
     this._isSyncing = true;
     try {
