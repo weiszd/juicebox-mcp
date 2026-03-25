@@ -6,7 +6,7 @@
     <title>Juicebox MCP</title>
     
     <!-- Font Awesome CSS-->
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/4.2.0/css/font-awesome.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/4.7.0/css/font-awesome.css">
     
     <style>
         * {
@@ -170,15 +170,216 @@
         @media (max-width: 768px), (hover: none) {
             #qr-code { display: none !important; }
         }
+
+        /* Hamburger Menu */
+        .header-left {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+
+        .hamburger-btn {
+            background: none;
+            border: none;
+            color: white;
+            cursor: pointer;
+            padding: 0.5rem;
+            border-radius: 6px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: background-color 0.2s;
+        }
+
+        .hamburger-btn:hover,
+        .hamburger-btn:focus-visible {
+            background: rgba(255, 255, 255, 0.2);
+            outline: none;
+        }
+
+        .hamburger-menu {
+            display: none;
+            position: absolute;
+            top: 60px;
+            left: 0.5rem;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+            z-index: 2000;
+            min-width: 200px;
+            overflow: hidden;
+            flex-direction: column;
+        }
+
+        .hamburger-menu.open {
+            display: flex;
+        }
+
+        .hamburger-menu-item {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            padding: 0.875rem 1.25rem;
+            border: none;
+            background: none;
+            cursor: pointer;
+            font-size: 0.95rem;
+            color: #333;
+            width: 100%;
+            text-align: left;
+            font-family: inherit;
+            transition: background-color 0.15s;
+        }
+
+        .hamburger-menu-item:hover,
+        .hamburger-menu-item:focus-visible {
+            background: #f0f0ff;
+            outline: none;
+        }
+
+        .hamburger-menu-item i.fa {
+            color: #667eea;
+            width: 20px;
+            text-align: center;
+        }
+
+        .hamburger-menu-item + .hamburger-menu-item {
+            border-top: 1px solid #eee;
+        }
+
+        /* URL Input Modal */
+        .url-input-modal-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.5);
+            z-index: 6000;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .url-input-modal-overlay.open {
+            display: flex;
+        }
+
+        .url-input-modal-content {
+            background: white;
+            border-radius: 12px;
+            padding: 2rem;
+            width: 90%;
+            max-width: 500px;
+            box-shadow: 0 12px 40px rgba(0, 0, 0, 0.25);
+            animation: modalSlideIn 0.2s ease-out;
+        }
+
+        @keyframes modalSlideIn {
+            from { opacity: 0; transform: translateY(-20px) scale(0.95); }
+            to { opacity: 1; transform: translateY(0) scale(1); }
+        }
+
+        .url-input-modal-content h2 {
+            margin: 0 0 1.25rem 0;
+            font-size: 1.25rem;
+            color: #333;
+            font-weight: 600;
+        }
+
+        .url-input-label {
+            display: block;
+            font-size: 0.875rem;
+            color: #555;
+            margin-bottom: 0.5rem;
+        }
+
+        .url-input-field {
+            width: 100%;
+            padding: 0.75rem 1rem;
+            border: 2px solid #ddd;
+            border-radius: 8px;
+            font-size: 0.95rem;
+            font-family: inherit;
+            box-sizing: border-box;
+            transition: border-color 0.2s;
+        }
+
+        .url-input-field:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.15);
+        }
+
+        .url-input-modal-buttons {
+            display: flex;
+            justify-content: flex-end;
+            gap: 0.75rem;
+            margin-top: 1.5rem;
+        }
+
+        .url-input-btn {
+            padding: 0.625rem 1.5rem;
+            border-radius: 8px;
+            font-size: 0.95rem;
+            font-family: inherit;
+            cursor: pointer;
+            border: none;
+            font-weight: 500;
+            transition: background-color 0.15s, box-shadow 0.15s;
+        }
+
+        .url-input-btn-cancel {
+            background: #f0f0f0;
+            color: #555;
+        }
+
+        .url-input-btn-cancel:hover {
+            background: #e0e0e0;
+        }
+
+        .url-input-btn-submit {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        .url-input-btn-submit:hover {
+            box-shadow: 0 2px 8px rgba(102, 126, 234, 0.4);
+        }
     </style>
 </head>
 <body>
     <div class="header">
-        <h1>Juicebox MCP</h1>
+        <div class="header-left">
+            <button id="hamburger-btn" class="hamburger-btn" aria-label="Open menu" aria-expanded="false">
+                <i class="fa fa-bars fa-lg"></i>
+            </button>
+            <h1>Juicebox MCP</h1>
+        </div>
         <div class="status-indicators">
             <div id="ws-status" class="status-indicator disconnected">
                 <div class="ws-status-indicator"></div>
                 <span class="ws-status-label">disconnected</span>
+            </div>
+        </div>
+    </div>
+
+    <nav id="hamburger-menu" class="hamburger-menu" role="menu" aria-hidden="true">
+        <button class="hamburger-menu-item" role="menuitem" data-action="loadMap">
+            <i class="fa fa-map"></i>
+            <span>Load Map</span>
+        </button>
+        <button class="hamburger-menu-item" role="menuitem" data-action="loadTrack">
+            <i class="fa fa-line-chart"></i>
+            <span>Load Track</span>
+        </button>
+    </nav>
+
+    <div id="url-input-modal" class="url-input-modal-overlay" aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="url-input-modal-title">
+        <div class="url-input-modal-content">
+            <h2 id="url-input-modal-title"></h2>
+            <label for="url-input-field" class="url-input-label">Enter URL:</label>
+            <input id="url-input-field" type="url" class="url-input-field" placeholder="https://example.com/file.hic" autocomplete="off" />
+            <div class="url-input-modal-buttons">
+                <button id="url-input-cancel" class="url-input-btn url-input-btn-cancel">Cancel</button>
+                <button id="url-input-submit" class="url-input-btn url-input-btn-submit">Load</button>
             </div>
         </div>
     </div>

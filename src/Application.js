@@ -27,6 +27,9 @@ export class Application {
 
     // Set up WebSocket connection
     this._setupWebSocket();
+
+    // Initialize hamburger menu
+    this._initHamburgerMenu();
   }
 
   /**
@@ -513,6 +516,137 @@ export class Application {
       container.style.display = 'block';
     } catch (error) {
       console.error('Error generating QR code:', error);
+    }
+  }
+
+  /**
+   * Initialize hamburger menu interactions
+   */
+  _initHamburgerMenu() {
+    const btn = document.getElementById('hamburger-btn');
+    const menu = document.getElementById('hamburger-menu');
+    const modal = document.getElementById('url-input-modal');
+    const field = document.getElementById('url-input-field');
+    const title = document.getElementById('url-input-modal-title');
+    const submitBtn = document.getElementById('url-input-submit');
+    const cancelBtn = document.getElementById('url-input-cancel');
+
+    if (!btn || !menu || !modal) return;
+
+    this._menuEl = menu;
+    this._modalEl = modal;
+    this._modalField = field;
+    this._modalTitle = title;
+    this._modalCallback = null;
+
+    // Toggle menu
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const isOpen = menu.classList.toggle('open');
+      menu.setAttribute('aria-hidden', String(!isOpen));
+      btn.setAttribute('aria-expanded', String(isOpen));
+      if (isOpen) {
+        const first = menu.querySelector('.hamburger-menu-item');
+        if (first) first.focus();
+      }
+    });
+
+    // Menu item clicks
+    menu.querySelectorAll('.hamburger-menu-item').forEach(item => {
+      item.addEventListener('click', () => {
+        this._closeMenu();
+        const action = item.dataset.action;
+        if (action === 'loadMap') {
+          this._showUrlModal('Load Map', 'https://example.com/file.hic', (url) => {
+            this._loadMap({ url, name: this._filenameFromUrl(url) });
+          });
+        } else if (action === 'loadTrack') {
+          this._showUrlModal('Load Track', 'https://example.com/track.bigwig', (url) => {
+            this._loadTrack({ url, name: this._filenameFromUrl(url) });
+          });
+        }
+      });
+    });
+
+    // Close menu on outside click
+    document.addEventListener('click', (e) => {
+      if (menu.classList.contains('open') && !menu.contains(e.target) && !btn.contains(e.target)) {
+        this._closeMenu();
+      }
+    });
+
+    // Escape key
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        if (modal.classList.contains('open')) {
+          this._closeUrlModal();
+        } else if (menu.classList.contains('open')) {
+          this._closeMenu();
+          btn.focus();
+        }
+      }
+    });
+
+    // Modal cancel
+    cancelBtn.addEventListener('click', () => this._closeUrlModal());
+
+    // Modal submit
+    submitBtn.addEventListener('click', () => this._submitUrlModal());
+
+    // Enter in input
+    field.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        this._submitUrlModal();
+      }
+    });
+
+    // Click on backdrop
+    modal.addEventListener('click', (e) => {
+      if (e.target === modal) this._closeUrlModal();
+    });
+  }
+
+  _closeMenu() {
+    this._menuEl.classList.remove('open');
+    this._menuEl.setAttribute('aria-hidden', 'true');
+    document.getElementById('hamburger-btn').setAttribute('aria-expanded', 'false');
+  }
+
+  _showUrlModal(titleText, placeholder, callback) {
+    this._modalCallback = callback;
+    this._modalTitle.textContent = titleText;
+    this._modalField.value = '';
+    this._modalField.placeholder = placeholder;
+    this._modalEl.classList.add('open');
+    this._modalEl.setAttribute('aria-hidden', 'false');
+    requestAnimationFrame(() => this._modalField.focus());
+  }
+
+  _closeUrlModal() {
+    this._modalEl.classList.remove('open');
+    this._modalEl.setAttribute('aria-hidden', 'true');
+    this._modalCallback = null;
+  }
+
+  _submitUrlModal() {
+    const url = this._modalField.value.trim();
+    if (!url) {
+      this._modalField.style.borderColor = '#dc3545';
+      setTimeout(() => { this._modalField.style.borderColor = ''; }, 1000);
+      this._modalField.focus();
+      return;
+    }
+    const callback = this._modalCallback;
+    this._closeUrlModal();
+    if (callback) callback(url);
+  }
+
+  _filenameFromUrl(url) {
+    try {
+      return new URL(url).pathname.split('/').pop() || url;
+    } catch {
+      return url;
     }
   }
 
