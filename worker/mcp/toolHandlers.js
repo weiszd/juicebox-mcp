@@ -253,6 +253,27 @@ export function registerTools(mcpServer, deps) {
     }
   );
 
+  // --- Tool: set_color_scale ---
+  mcpServer.registerTool(
+    'set_color_scale',
+    {
+      title: 'Set Color Scale',
+      description: 'Adjust the color scale (threshold) of the contact map. Use "increase" to double the threshold (lighter), "decrease" to halve it (darker), or set an exact numeric value.',
+      inputSchema: {
+        action: z.enum(['increase', 'decrease', 'set']).describe('Action: "increase" doubles the threshold, "decrease" halves it, "set" uses the provided value'),
+        value: z.number().positive().optional().describe('Exact threshold value (required when action is "set")')
+      }
+    },
+    async ({ action, value }) => {
+      if (action === 'set' && (value === undefined || value === null)) {
+        return { content: [{ type: 'text', text: 'A positive numeric value is required when action is "set"' }], isError: true };
+      }
+      await sendCommand({ type: 'setColorScale', action, value });
+      const desc = action === 'set' ? `set to ${value}` : action === 'increase' ? 'increased (doubled)' : 'decreased (halved)';
+      return { content: [{ type: 'text', text: `Color scale threshold ${desc}` }] };
+    }
+  );
+
   // Well-known track presets (resolved by keyword)
   const TRACK_PRESETS = {
     genes: {
@@ -623,6 +644,11 @@ Welcome! You can interact with Juicebox using natural language. Just tell me wha
 - "Set the foreground color to red"
 - "Make the background black"
 - "Use blue (#0000ff) for the map"
+
+**Adjust color scale (threshold):**
+- "Increase the color scale" — doubles the threshold (lighter map)
+- "Decrease the color scale" — halves the threshold (darker map)
+- "Set the color scale to 500" — set an exact threshold value
 
 **Change normalization (in-place, no reload):**
 - "Switch to KR normalization" or "Use Balanced normalization"

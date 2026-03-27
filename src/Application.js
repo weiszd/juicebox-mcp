@@ -75,6 +75,9 @@ export class Application {
       ['setForegroundColor', (command) => {
         this._setForegroundColor(command);
       }],
+      ['setColorScale', (command) => {
+        this._setColorScale(command);
+      }],
       ['setBackgroundColor', (command) => {
         this._setBackgroundColor(command);
       }],
@@ -1099,6 +1102,40 @@ export class Application {
       console.log(`Foreground color set to RGB(${r}, ${g}, ${b}) with threshold ${threshold}`);
     } catch (error) {
       console.error('Error setting foreground color:', error);
+    }
+  }
+
+  /**
+   * Set color scale threshold: absolute value, increase (double), or decrease (halve)
+   */
+  _setColorScale(command) {
+    if (!this.browser) {
+      console.error('Browser not initialized');
+      return;
+    }
+
+    try {
+      const colorScale = this.browser.getColorScale();
+      if (!colorScale) {
+        console.error('No color scale available');
+        return;
+      }
+
+      let newThreshold;
+      if (command.action === 'increase') {
+        newThreshold = colorScale.getThreshold() * 2;
+      } else if (command.action === 'decrease') {
+        newThreshold = colorScale.getThreshold() / 2;
+      } else {
+        newThreshold = command.value;
+      }
+
+      this.browser.setColorScaleThreshold(newThreshold);
+      // Update the UI widget (setColorScaleThreshold doesn't notify the widget)
+      this.browser.notifyColorScale(this.browser.getColorScale());
+      console.log(`Color scale threshold set to ${newThreshold}`);
+    } catch (error) {
+      console.error('Error setting color scale:', error);
     }
   }
 
