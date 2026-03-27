@@ -257,7 +257,9 @@ export function registerTools(mcpServer, deps) {
     genes: {
       url: 'https://hgdownload.soe.ucsc.edu/goldenPath/hg38/database/ncbiRefSeqSelect.txt.gz',
       name: 'Refseq Select',
-      color: { r: 0, g: 0, b: 0 }
+      color: { r: 0, g: 0, b: 0 },
+      type: 'annotation',
+      format: 'refgene'
     }
   };
 
@@ -281,6 +283,8 @@ export function registerTools(mcpServer, deps) {
 
       const command = { type: 'loadTrack', url: resolvedUrl, name: resolvedName };
       if (resolvedColor) command.color = resolvedColor;
+      if (preset?.type) command.trackType = preset.type;
+      if (preset?.format) command.format = preset.format;
       await sendCommand(command);
       return { content: [{ type: 'text', text: `Loading track${resolvedName ? ` "${resolvedName}"` : ''} from ${resolvedUrl}` }] };
     }

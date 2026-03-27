@@ -920,6 +920,8 @@ export class Application {
         const { r, g, b } = command.color;
         config.color = `rgb(${r},${g},${b})`;
       }
+      if (command.trackType) config.type = command.trackType;
+      if (command.format) config.format = command.format;
       await this.browser.loadTracks([config]);
       console.log(`Track loaded: ${command.url}`);
     } catch (error) {

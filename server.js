@@ -813,7 +813,9 @@ const TRACK_PRESETS = {
   genes: {
     url: 'https://hgdownload.soe.ucsc.edu/goldenPath/hg38/database/ncbiRefSeqSelect.txt.gz',
     name: 'Refseq Select',
-    color: { r: 0, g: 0, b: 0 }
+    color: { r: 0, g: 0, b: 0 },
+    type: 'annotation',
+    format: 'refgene'
   }
 };
 
@@ -838,6 +840,8 @@ mcpServer.registerTool(
 
     const command = { type: 'loadTrack', url: resolvedUrl, name: resolvedName };
     if (resolvedColor) command.color = resolvedColor;
+    if (preset?.type) command.trackType = preset.type;
+    if (preset?.format) command.format = preset.format;
     routeToCurrentSession(command);
 
     return {
