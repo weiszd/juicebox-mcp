@@ -239,7 +239,7 @@ export class Application {
       }
     };
 
-    // 4. DISPLAY MODE changes
+    // 7. DISPLAY MODE changes
     const originalSetDisplayMode = browser.setDisplayMode.bind(browser);
     browser.setDisplayMode = async (mode) => {
       await originalSetDisplayMode(mode);
@@ -247,6 +247,131 @@ export class Application {
         this.wsClient.sendSyncEvent('displayModeChange', { displayMode: mode });
       }
     };
+
+    // 8. MAP LOAD — wrap loadHicFile and loadHicControlFile
+    const originalLoadHicFile = browser.loadHicFile.bind(browser);
+    browser.loadHicFile = async (config) => {
+      await originalLoadHicFile(config);
+      if (!this._isSyncing && this.wsClient) {
+        this.wsClient.sendSyncEvent('mapLoad', { url: config.url, name: config.name, normalization: config.normalization, locus: config.locus });
+      }
+    };
+
+    const originalLoadHicControlFile = browser.loadHicControlFile.bind(browser);
+    browser.loadHicControlFile = async (config) => {
+      await originalLoadHicControlFile(config);
+      if (!this._isSyncing && this.wsClient) {
+        this.wsClient.sendSyncEvent('controlMapLoad', { url: config.url, name: config.name, normalization: config.normalization });
+      }
+    };
+
+    // 9. TRACK LOAD — wrap browser.loadTracks to catch both UI and MCP track loads
+    const originalLoadTracks = browser.loadTracks.bind(browser);
+    browser.loadTracks = async (configs) => {
+      await originalLoadTracks(configs);
+      if (!this._isSyncing && this.wsClient) {
+        this.wsClient.sendSyncEvent('trackLoad', { configs });
+      }
+      // Wrap sync listeners on any newly added trackPairs
+      this._wrapTrackPairsSyncListeners();
+    };
+
+    // 9. TRACK REMOVAL — wrap layoutController.removeTrackXYPair
+    const lc = browser.layoutController;
+    const originalRemoveTrack = lc.removeTrackXYPair.bind(lc);
+    lc.removeTrackXYPair = (trackPair) => {
+      const track = trackPair.track || trackPair.x?.track;
+      const trackName = track?.name;
+      originalRemoveTrack(trackPair);
+      if (!this._isSyncing && this.wsClient && trackName) {
+        this.wsClient.sendSyncEvent('trackRemove', { track: trackName });
+      }
+    };
+
+    // 10. TRACK PROPERTY CHANGES — wrap methods on existing trackPairs
+    this._wrapTrackPairsSyncListeners();
+  }
+
+  /**
+   * Wrap setColor, setDataRange, setTrackLabelName on all trackPairs
+   * so that UI-driven changes broadcast sync events.
+   * Safe to call multiple times — already-wrapped pairs are skipped.
+   */
+  _wrapTrackPairsSyncListeners() {
+    if (!this.browser || !this.wsClient) return;
+    const trackPairs = this.browser.trackPairs || [];
+
+    for (const tp of trackPairs) {
+      if (tp._syncWrapped) continue;
+      tp._syncWrapped = true;
+
+      // Track the name in a closure variable so we always have the pre-change value,
+      // even if track.name is set externally before setTrackLabelName is called.
+      const t = tp.track || tp.x?.track;
+      let lastKnownName = t?.name;
+
+      // Wrap setColor
+      if (tp.setColor) {
+        const origSetColor = tp.setColor.bind(tp);
+        tp.setColor = (color) => {
+          origSetColor(color);
+          if (!this._isSyncing && this.wsClient) {
+            this.wsClient.sendSyncEvent('trackColorChange', { track: lastKnownName, colorString: color });
+          }
+        };
+      }
+
+      // Wrap setDataRange
+      if (tp.setDataRange) {
+        const origSetDataRange = tp.setDataRange.bind(tp);
+        tp.setDataRange = (min, max) => {
+          origSetDataRange(min, max);
+          if (!this._isSyncing && this.wsClient) {
+            this.wsClient.sendSyncEvent('trackDataRangeChange', { track: lastKnownName, min, max });
+          }
+        };
+      }
+
+      // Wrap setTrackLabelName
+      if (tp.setTrackLabelName) {
+        const origSetLabel = tp.setTrackLabelName.bind(tp);
+        tp.setTrackLabelName = (name) => {
+          const oldName = lastKnownName;
+          origSetLabel(name);
+          lastKnownName = name; // update for next time
+          if (!this._isSyncing && this.wsClient) {
+            this.wsClient.sendSyncEvent('trackNameChange', { track: oldName, name });
+          }
+        };
+      }
+
+      // Intercept autoscale and logScale property sets via getter/setter
+      if (t) {
+        let _autoscale = t.autoscale;
+        Object.defineProperty(t, 'autoscale', {
+          get() { return _autoscale; },
+          set: (value) => {
+            _autoscale = value;
+            if (!this._isSyncing && this.wsClient) {
+              this.wsClient.sendSyncEvent('trackAutoscaleChange', { track: lastKnownName, enabled: value });
+            }
+          },
+          configurable: true
+        });
+
+        let _logScale = t.logScale;
+        Object.defineProperty(t, 'logScale', {
+          get() { return _logScale; },
+          set: (value) => {
+            _logScale = value;
+            if (!this._isSyncing && this.wsClient) {
+              this.wsClient.sendSyncEvent('trackLogScaleChange', { track: lastKnownName, enabled: value });
+            }
+          },
+          configurable: true
+        });
+      }
+    }
   }
 
   /**
@@ -368,12 +493,83 @@ export class Application {
           break;
 
         case 'mapLoad':
-          await this._loadMap(command);
+          await this.browser.loadHicFile({ url: command.url, name: command.name, normalization: command.normalization, locus: command.locus });
           break;
 
         case 'controlMapLoad':
-          await this._loadControlMap(command);
+          await this.browser.loadHicControlFile({ url: command.url, name: command.name, normalization: command.normalization });
           break;
+
+        case 'trackLoad':
+          if (command.configs) {
+            await this.browser.loadTracks(command.configs);
+          }
+          break;
+
+        case 'trackRemove': {
+          const found = this._findTrack(command.track);
+          if (found && !found.is2D) {
+            this.browser.layoutController.removeTrackXYPair(found.trackPair);
+          } else if (found && found.is2D) {
+            const idx = this.browser.tracks2D.indexOf(found.track2D);
+            if (idx >= 0) {
+              this.browser.tracks2D.splice(idx, 1);
+              this.browser.contactMatrixView.clearImageCaches();
+              this.browser.contactMatrixView.update();
+            }
+          }
+          break;
+        }
+
+        case 'trackColorChange': {
+          const found = this._findTrack(command.track);
+          if (found && !found.is2D) {
+            found.track.color = command.colorString;
+            found.trackPair.setColor(command.colorString);
+          } else if (found && found.is2D) {
+            found.track2D.color = command.colorString;
+            this.browser.contactMatrixView.clearImageCaches();
+            this.browser.contactMatrixView.update();
+          }
+          break;
+        }
+
+        case 'trackNameChange': {
+          const found = this._findTrack(command.track);
+          if (found && !found.is2D) {
+            found.track.name = command.name;
+            found.trackPair.setTrackLabelName(command.name);
+          } else if (found && found.is2D) {
+            found.track2D.name = command.name;
+          }
+          break;
+        }
+
+        case 'trackDataRangeChange': {
+          const found = this._findTrack(command.track);
+          if (found && !found.is2D) {
+            found.trackPair.setDataRange(command.min, command.max);
+          }
+          break;
+        }
+
+        case 'trackAutoscaleChange': {
+          const found = this._findTrack(command.track);
+          if (found && !found.is2D) {
+            found.track.autoscale = command.enabled;
+            found.trackPair.repaintViews();
+          }
+          break;
+        }
+
+        case 'trackLogScaleChange': {
+          const found = this._findTrack(command.track);
+          if (found && !found.is2D) {
+            found.track.logScale = command.enabled;
+            found.trackPair.repaintViews();
+          }
+          break;
+        }
 
         default:
           console.warn('Unknown sync type:', command.syncType);
@@ -1111,8 +1307,9 @@ export class Application {
       if (found.is2D) {
         found.track2D.name = command.name;
       } else {
-        found.track.name = command.name;
+        // Call setTrackLabelName first so the sync wrapper captures the old name
         found.trackPair.setTrackLabelName(command.name);
+        found.track.name = command.name;
       }
       console.log(`Track renamed to: ${command.name}`);
     } catch (error) {
