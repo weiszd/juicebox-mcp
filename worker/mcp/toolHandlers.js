@@ -46,6 +46,7 @@ export function registerTools(mcpServer, deps) {
     sendCommand,
     requestSessionData,
     requestCompressedSessionData,
+    requestTrackList,
     isBrowserConnected,
     sessionId,
     browserUrl,
@@ -316,6 +317,134 @@ export function registerTools(mcpServer, deps) {
     }
   );
 
+  // --- Tool: list_tracks ---
+  mcpServer.registerTool(
+    'list_tracks',
+    {
+      title: 'List Tracks',
+      description: 'List all loaded 1D and 2D tracks in the current Juicebox session, including their names, types, colors, data ranges, and display settings.',
+      inputSchema: {}
+    },
+    async () => {
+      try {
+        const tracks = await requestTrackList();
+        if (!tracks || tracks.length === 0) {
+          return { content: [{ type: 'text', text: 'No tracks loaded.' }] };
+        }
+        return { content: [{ type: 'text', text: JSON.stringify(tracks, null, 2) }] };
+      } catch (error) {
+        return { content: [{ type: 'text', text: `Error: ${error.message}` }], isError: true };
+      }
+    }
+  );
+
+  // --- Tool: remove_track ---
+  mcpServer.registerTool(
+    'remove_track',
+    {
+      title: 'Remove Track',
+      description: 'Remove a loaded track from Juicebox by name or index number (use list_tracks to see available tracks).',
+      inputSchema: {
+        track: z.string().describe('Track name or 1-based index number')
+      }
+    },
+    async ({ track }) => {
+      await sendCommand({ type: 'removeTrack', track });
+      return { content: [{ type: 'text', text: `Removing track: ${track}` }] };
+    }
+  );
+
+  // --- Tool: set_track_color ---
+  mcpServer.registerTool(
+    'set_track_color',
+    {
+      title: 'Set Track Color',
+      description: 'Set or reset the color of a loaded track. Omit color to reset to default.',
+      inputSchema: {
+        track: z.string().describe('Track name or 1-based index number'),
+        color: colorSchema.optional().describe('Hex color (e.g., "#ff0000"). Omit to reset to default.')
+      }
+    },
+    async ({ track, color }) => {
+      const command = { type: 'setTrackColor', track };
+      if (color) {
+        const rgb = hexToRgb(color);
+        if (rgb) command.color = rgb;
+      }
+      await sendCommand(command);
+      return { content: [{ type: 'text', text: color ? `Setting track "${track}" color to ${color}` : `Resetting track "${track}" color to default` }] };
+    }
+  );
+
+  // --- Tool: set_track_name ---
+  mcpServer.registerTool(
+    'set_track_name',
+    {
+      title: 'Set Track Name',
+      description: 'Rename a loaded track.',
+      inputSchema: {
+        track: z.string().describe('Current track name or 1-based index number'),
+        name: z.string().describe('New display name for the track')
+      }
+    },
+    async ({ track, name }) => {
+      await sendCommand({ type: 'setTrackName', track, name });
+      return { content: [{ type: 'text', text: `Renaming track "${track}" to "${name}"` }] };
+    }
+  );
+
+  // --- Tool: set_track_data_range ---
+  mcpServer.registerTool(
+    'set_track_data_range',
+    {
+      title: 'Set Track Data Range',
+      description: 'Set the min/max data range for a 1D track. This disables autoscale.',
+      inputSchema: {
+        track: z.string().describe('Track name or 1-based index number'),
+        min: z.number().describe('Minimum value'),
+        max: z.number().describe('Maximum value')
+      }
+    },
+    async ({ track, min, max }) => {
+      await sendCommand({ type: 'setTrackDataRange', track, min, max });
+      return { content: [{ type: 'text', text: `Setting track "${track}" data range to [${min}, ${max}]` }] };
+    }
+  );
+
+  // --- Tool: set_track_autoscale ---
+  mcpServer.registerTool(
+    'set_track_autoscale',
+    {
+      title: 'Set Track Autoscale',
+      description: 'Enable or disable autoscale for a 1D track.',
+      inputSchema: {
+        track: z.string().describe('Track name or 1-based index number'),
+        enabled: z.boolean().default(true).describe('Enable (true) or disable (false) autoscale')
+      }
+    },
+    async ({ track, enabled }) => {
+      await sendCommand({ type: 'setTrackAutoscale', track, enabled });
+      return { content: [{ type: 'text', text: `${enabled ? 'Enabling' : 'Disabling'} autoscale for track "${track}"` }] };
+    }
+  );
+
+  // --- Tool: set_track_log_scale ---
+  mcpServer.registerTool(
+    'set_track_log_scale',
+    {
+      title: 'Set Track Log Scale',
+      description: 'Enable or disable log scale for a 1D track.',
+      inputSchema: {
+        track: z.string().describe('Track name or 1-based index number'),
+        enabled: z.boolean().default(true).describe('Enable (true) or disable (false) log scale')
+      }
+    },
+    async ({ track, enabled }) => {
+      await sendCommand({ type: 'setTrackLogScale', track, enabled });
+      return { content: [{ type: 'text', text: `${enabled ? 'Enabling' : 'Disabling'} log scale for track "${track}"` }] };
+    }
+  );
+
   // --- Tool: create_shareable_url ---
   mcpServer.registerTool(
     'create_shareable_url',
@@ -437,7 +566,7 @@ Welcome! You can interact with Juicebox using natural language. Just tell me wha
 
 **First, connect your browser:**
 - Say: "Open Juicebox" or "Show me Juicebox" or "Get the Juicebox URL"
-- I'll give you a URL to open in your browser
+- I'll give you a URL with a QR code to open in your browser
 
 ## Common Things You Can Ask
 
@@ -449,14 +578,14 @@ Welcome! You can interact with Juicebox using natural language. Just tell me wha
 - "Search for mouse heart tissue Hi-C data"
 - "What maps are available from ENCODE?"
 
-**Load a specific map:**
+**Load a map:**
 - "Load this map" (after searching)
-- "Load the first result"
 - "Load map number 3"
-
-**Load from a URL:**
 - "Load this Hi-C file: [URL]"
 - "Load a map from [URL] with KR normalization"
+
+**Load a control map for comparison:**
+- "Load a control map from [URL]"
 
 ### Exploring the Genome
 
@@ -467,49 +596,66 @@ Welcome! You can interact with Juicebox using natural language. Just tell me wha
 - "Jump to the GATA4 gene"
 
 **Zoom:**
-- "Zoom in"
-- "Zoom out"
+- "Zoom in" / "Zoom out"
 
-### Visualizing Data
+### Tracks
+
+**Load tracks:**
+- "Add a gene track" (loads NCBI RefSeq Select automatically)
+- "Load this bigWig track: [URL]"
+- "Add this annotation file: [URL]"
+
+**Manage tracks:**
+- "List loaded tracks" — shows all 1D and 2D tracks with their properties
+- "Remove the gene track" or "Remove track 2" — remove by name or index
+- "Rename track 1 to My Track"
+
+**Track visualization:**
+- "Set the gene track color to red"
+- "Reset track 2 color to default"
+- "Set track data range to 0-10"
+- "Enable autoscale for the bigWig track"
+- "Enable log scale for track 1"
+
+### Map Visualization
 
 **Change colors:**
 - "Set the foreground color to red"
 - "Make the background black"
 - "Use blue (#0000ff) for the map"
 
-**Change normalization (does NOT reload the map):**
+**Change normalization (in-place, no reload):**
 - "Switch to KR normalization" or "Use Balanced normalization"
 - "Set normalization to Coverage" or "Use VC normalization"
 - "Remove normalization" or "Set normalization to None"
 - Available: None, Coverage (VC), Coverage-Sqrt (VC_SQRT), Balanced/Knight-Ruiz (KR), SCALE, INTER_SCALE, GW_SCALE
 
-### Working with Sessions
+### Sessions
 
-**Save your work:**
+**Save and restore:**
 - "Save this session"
-
-**Share your visualization:**
-- "Create a shareable URL"
-- "Give me a link to share this"
-
-**Load a saved session:**
+- "Save to [file path]"
 - "Load this session: [paste JSON]"
 - "Load session from [URL]"
 
-### Advanced Workflows
+**Share:**
+- "Create a shareable URL"
+- "Give me a link to share this"
 
-**Compare maps:**
-- "Load a control map from [URL]"
+### Data Discovery
 
 **Get information:**
 - "What data sources are available?"
 - "Tell me about this map"
+- "What are the statistics for ENCODE data?"
+- "What other experiments are available for this biosample?"
 
 ## Tips
 
 - **Be natural:** Just describe what you want to do in plain language
 - **I'll guide you:** If something needs clarification, I'll ask
 - **Context matters:** I remember what we've been working on
+- **Multi-browser sync:** All browsers connected to the same session stay in sync automatically
 
 ## Need Help?
 

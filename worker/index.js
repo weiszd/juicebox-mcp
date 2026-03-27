@@ -181,6 +181,15 @@ async function handleMcpRequest(request, env) {
         return result.data;
       },
 
+      requestTrackList: async () => {
+        const stub = getDoStub(effectiveSessionId);
+        if (!stub) throw new Error('No session ID available');
+        const resp = await stub.fetch(new Request('https://do/request-track-list', { method: 'POST' }));
+        const result = await resp.json();
+        if (result.error) throw new Error(result.error);
+        return result.data;
+      },
+
       isBrowserConnected: async () => {
         const stub = getDoStub(effectiveSessionId);
         if (!stub) return false;

@@ -35,6 +35,11 @@ export class WebSocketRoom {
       return this.requestDataFromBrowser('getCompressedSession', 'compressedSessionData', 'compressedSessionDataError');
     }
 
+    // Worker requests track list from browser
+    if (url.pathname === '/request-track-list') {
+      return this.requestDataFromBrowser('getTrackList', 'trackListData', 'trackListError');
+    }
+
     // Health check / connection status
     if (url.pathname === '/status') {
       const websockets = this.state.getWebSockets();
@@ -187,7 +192,7 @@ export class WebSocketRoom {
 
         if (data.type === pending.responseType) {
           // Resolve with the appropriate data field
-          const responseData = data.sessionData || data.compressedSession || data;
+          const responseData = data.sessionData || data.compressedSession || data.trackList || data;
           pending.resolve(responseData);
         } else if (data.type === pending.errorType) {
           pending.reject(new Error(data.error || 'Browser returned an error'));

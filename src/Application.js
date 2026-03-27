@@ -93,6 +93,27 @@ export class Application {
       ['setNormalization', (command) => {
         this._setNormalization(command);
       }],
+      ['getTrackList', async (command) => {
+        await this._getTrackList(command);
+      }],
+      ['removeTrack', (command) => {
+        this._removeTrack(command);
+      }],
+      ['setTrackColor', (command) => {
+        this._setTrackColor(command);
+      }],
+      ['setTrackName', (command) => {
+        this._setTrackName(command);
+      }],
+      ['setTrackDataRange', (command) => {
+        this._setTrackDataRange(command);
+      }],
+      ['setTrackAutoscale', (command) => {
+        this._setTrackAutoscale(command);
+      }],
+      ['setTrackLogScale', (command) => {
+        this._setTrackLogScale(command);
+      }],
       ['syncEvent', async (command) => {
         await this._handleSyncCommand(command);
       }],
@@ -776,6 +797,8 @@ export class Application {
 
       if (sessionData) {
         await juicebox.restoreSession(this.container, sessionData);
+        this.browser = juicebox.getCurrentBrowser();
+        this._setupSyncEventListeners();
         console.log('Session loaded');
       } else {
         console.error('No session data provided');
@@ -944,6 +967,209 @@ export class Application {
       console.log(`Normalization set to ${command.normalization}`);
     } catch (error) {
       console.error('Error setting normalization:', error);
+    }
+  }
+
+  /**
+   * Find a track by name (case-insensitive) or 1-based index.
+   * Returns { trackPair, track, track2D, index, is2D } or null.
+   */
+  _findTrack(identifier) {
+    if (!this.browser) return null;
+
+    const trackPairs = this.browser.trackPairs || [];
+    const tracks2D = this.browser.tracks2D || [];
+
+    const getTrack = (tp) => tp.track || tp.x?.track;
+
+    // Try as 1-based numeric index (1D first, then 2D)
+    const num = parseInt(identifier);
+    if (!isNaN(num) && String(num) === identifier.trim()) {
+      if (num >= 1 && num <= trackPairs.length) {
+        const tp = trackPairs[num - 1];
+        return { trackPair: tp, track: getTrack(tp), index: num, is2D: false };
+      }
+      const idx2D = num - trackPairs.length;
+      if (idx2D >= 1 && idx2D <= tracks2D.length) {
+        return { track2D: tracks2D[idx2D - 1], index: num, is2D: true };
+      }
+      return null;
+    }
+
+    // Match by name (case-insensitive)
+    const lowerName = identifier.toLowerCase();
+    for (let i = 0; i < trackPairs.length; i++) {
+      const t = getTrack(trackPairs[i]);
+      if (t && t.name && t.name.toLowerCase() === lowerName) {
+        return { trackPair: trackPairs[i], track: t, index: i + 1, is2D: false };
+      }
+    }
+    for (let i = 0; i < tracks2D.length; i++) {
+      if (tracks2D[i].name && tracks2D[i].name.toLowerCase() === lowerName) {
+        return { track2D: tracks2D[i], index: trackPairs.length + i + 1, is2D: true };
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Get list of loaded tracks and send back to server
+   */
+  async _getTrackList(command) {
+    try {
+      const session = juicebox.toJSON();
+      const browsers = session.browsers || [];
+      const tracks = [];
+
+      for (const browser of browsers) {
+        if (browser.tracks) {
+          for (let i = 0; i < browser.tracks.length; i++) {
+            const t = browser.tracks[i];
+            tracks.push({ index: i + 1, ...t });
+          }
+        }
+      }
+
+      if (this.wsClient && this.wsClient.isConnected() && this.wsClient.ws) {
+        this.wsClient.ws.send(JSON.stringify({
+          type: 'trackListData',
+          trackList: tracks,
+          requestId: command.requestId
+        }));
+      }
+    } catch (error) {
+      console.error('Error getting track list:', error);
+      if (this.wsClient && this.wsClient.isConnected() && this.wsClient.ws) {
+        this.wsClient.ws.send(JSON.stringify({
+          type: 'trackListError',
+          error: error.message,
+          requestId: command.requestId
+        }));
+      }
+    }
+  }
+
+  /**
+   * Remove a track by name or index
+   */
+  _removeTrack(command) {
+    if (!this.browser) { console.error('Browser not initialized'); return; }
+    const found = this._findTrack(command.track);
+    if (!found) { console.error(`Track not found: ${command.track}`); return; }
+
+    try {
+      if (found.is2D) {
+        const tracks2D = this.browser.tracks2D;
+        const idx = tracks2D.indexOf(found.track2D);
+        if (idx >= 0) {
+          tracks2D.splice(idx, 1);
+          this.browser.contactMatrixView.clearImageCaches();
+          this.browser.contactMatrixView.update();
+        }
+      } else {
+        this.browser.layoutController.removeTrackXYPair(found.trackPair);
+      }
+      console.log(`Track removed: ${command.track}`);
+    } catch (error) {
+      console.error('Error removing track:', error);
+    }
+  }
+
+  /**
+   * Set or reset track color
+   */
+  _setTrackColor(command) {
+    if (!this.browser) { console.error('Browser not initialized'); return; }
+    const found = this._findTrack(command.track);
+    if (!found) { console.error(`Track not found: ${command.track}`); return; }
+
+    try {
+      const colorStr = command.color ? `rgb(${command.color.r},${command.color.g},${command.color.b})` : undefined;
+      if (found.is2D) {
+        found.track2D.color = colorStr;
+        this.browser.contactMatrixView.clearImageCaches();
+        this.browser.contactMatrixView.update();
+      } else {
+        found.track.color = colorStr;
+        found.trackPair.setColor(colorStr);
+      }
+      console.log(`Track color ${colorStr ? 'set to ' + colorStr : 'reset'}: ${command.track}`);
+    } catch (error) {
+      console.error('Error setting track color:', error);
+    }
+  }
+
+  /**
+   * Set track name
+   */
+  _setTrackName(command) {
+    if (!this.browser) { console.error('Browser not initialized'); return; }
+    const found = this._findTrack(command.track);
+    if (!found) { console.error(`Track not found: ${command.track}`); return; }
+
+    try {
+      if (found.is2D) {
+        found.track2D.name = command.name;
+      } else {
+        found.track.name = command.name;
+        found.trackPair.setTrackLabelName(command.name);
+      }
+      console.log(`Track renamed to: ${command.name}`);
+    } catch (error) {
+      console.error('Error setting track name:', error);
+    }
+  }
+
+  /**
+   * Set track data range (1D tracks only)
+   */
+  _setTrackDataRange(command) {
+    if (!this.browser) { console.error('Browser not initialized'); return; }
+    const found = this._findTrack(command.track);
+    if (!found) { console.error(`Track not found: ${command.track}`); return; }
+    if (found.is2D) { console.error('Data range not supported for 2D tracks'); return; }
+
+    try {
+      found.trackPair.setDataRange(command.min, command.max);
+      console.log(`Track data range set to [${command.min}, ${command.max}]: ${command.track}`);
+    } catch (error) {
+      console.error('Error setting track data range:', error);
+    }
+  }
+
+  /**
+   * Set track autoscale (1D tracks only)
+   */
+  _setTrackAutoscale(command) {
+    if (!this.browser) { console.error('Browser not initialized'); return; }
+    const found = this._findTrack(command.track);
+    if (!found) { console.error(`Track not found: ${command.track}`); return; }
+    if (found.is2D) { console.error('Autoscale not supported for 2D tracks'); return; }
+
+    try {
+      found.track.autoscale = command.enabled;
+      found.trackPair.repaintViews();
+      console.log(`Track autoscale ${command.enabled ? 'enabled' : 'disabled'}: ${command.track}`);
+    } catch (error) {
+      console.error('Error setting track autoscale:', error);
+    }
+  }
+
+  /**
+   * Set track log scale (1D tracks only)
+   */
+  _setTrackLogScale(command) {
+    if (!this.browser) { console.error('Browser not initialized'); return; }
+    const found = this._findTrack(command.track);
+    if (!found) { console.error(`Track not found: ${command.track}`); return; }
+    if (found.is2D) { console.error('Log scale not supported for 2D tracks'); return; }
+
+    try {
+      found.track.logScale = command.enabled;
+      found.trackPair.repaintViews();
+      console.log(`Track log scale ${command.enabled ? 'enabled' : 'disabled'}: ${command.track}`);
+    } catch (error) {
+      console.error('Error setting track log scale:', error);
     }
   }
 
