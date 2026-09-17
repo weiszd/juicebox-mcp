@@ -23,4 +23,5 @@ dist/
 .history
 
 # Claude Code per-developer settings
+.claude/settings.json
 .claude/settings.local.json
