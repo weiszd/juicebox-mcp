@@ -21,3 +21,6 @@ dist/
 # Cloudflare Workers
 .wrangler/
 .history
+
+# Claude Code per-developer settings
+.claude/settings.local.json
