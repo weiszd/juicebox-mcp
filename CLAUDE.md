@@ -30,7 +30,7 @@ npm run dev:server             # wrangler dev on :8787
 npm run deploy:server          # wrangler deploy
 ```
 
-Server config lives in `packages/server/wrangler.toml` (`[vars]`: `BROWSER_URL`, `TINYURL_DOMAIN`, `TINYURL_ENDPOINT`, `ALLOWED_ORIGINS` — the exact-match `Origin` allow-list for `/ws`). The `TINYURL_API_KEY` secret is set with `wrangler secret put`.
+Server config lives in `packages/server/wrangler.toml` (`[vars]`: `BROWSER_URL`, `TINYURL_DOMAIN`, `TINYURL_ENDPOINT`, `ALLOWED_ORIGINS` — the exact-match `Origin` allow-list for `/ws`). It declares the `jbmcp.3dg.io` custom domain. Secrets `TINYURL_API_KEY` and `SESSION_HMAC_SECRET` are set with `wrangler secret put` (locally in `packages/server/.dev.vars`); without `SESSION_HMAC_SECRET` the `x-openai-session` (ChatGPT) path fails rather than using a default key.
 
 ## Architecture
 
@@ -49,7 +49,7 @@ A tool call flows: client → `/mcp` tool handler → Durable Object → WebSock
 - `src/durableObjects/WebSocketRoom.js` — one Durable Object per room; owns the sockets, relays sync events to other peers, fans commands out and waits for acks, keeps the last saved session.
 - `src/durableObjects/McpSession.js` — one Durable Object per MCP session; stores the room `join_room` bound it to.
 - `src/mcp/toolHandlers.js` — the single `registerTools(mcpServer, deps)` tool catalogue. `deps` abstracts the Durable Object (`sendCommand`, `requestSessionData`, `shortenURL`, …).
-- `src/search/` — dataset search pipeline: `dataSourceConfigs` (TSV catalogs on S3, described declaratively) → `dataParsers` → `metadataEnricher` → `queryExpander` (genomics synonym dictionary) → `mapFilter` → `resultFormatter`.
+- `src/search/` — dataset search pipeline: `catalogs` (ENCODE and 4DN igv-data TSV URLs + columns, copied from juicebox-web; keep in sync) → `dataSourceConfigs` (how each TSV is read) → `dataParsers` → `metadataEnricher` → `queryExpander` (genomics synonym dictionary) → `mapFilter` → `resultFormatter`.
 - `src/qrPng.js`, `src/urlShortener.js` — join-link QR and TinyURL helpers.
 - `src/lib/logger.js` — use `logInfo`/`logWarn`/`logError` in server code; **no `console.log` in tool paths**.
 

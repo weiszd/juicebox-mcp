@@ -1,0 +1,3 @@
+HREF	Assembly	Biosample	Description	BioRep	TechRep	Lab	Accession	Experiment
+/files/ENCFF706SFK/@@download/ENCFF706SFK.hic	hg19	Homo sapiens mammary epithelial cell female	HMEC dilution Hi-C	1	1_1	Erez Aiden, Baylor	ENCFF706SFK	ENCSR080ODG
+/files/ENCFF922ERE/@@download/ENCFF922ERE.hic	hg19	Homo sapiens hTERT RPE-1		1 2 3 4	1_1 2_1 3_1 3_2 4_1 4_2	Erez Aiden, Baylor	ENCFF922ERE	ENCSR846DUS

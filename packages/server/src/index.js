@@ -142,9 +142,17 @@ async function handleMcpRequest(request, env) {
     });
 
     // Fallback: ChatGPT doesn't echo mcp-session-id back, but sends x-openai-session on every request.
-    // HMAC the raw token so it's not exposed in browser URLs.
+    // HMAC the raw token so it's not exposed in browser URLs. No secret, no fallback key.
+    if (!sessionId && openaiSession && !env.SESSION_HMAC_SECRET) {
+      logError('[MCP] SESSION_HMAC_SECRET is not set; refusing x-openai-session request');
+      return Response.json({
+        jsonrpc: '2.0',
+        error: { code: -32603, message: 'Server misconfigured: SESSION_HMAC_SECRET is not set' },
+        id: body?.id ?? null
+      }, { status: 500 });
+    }
     const effectiveSessionId = sessionId ||
-      (openaiSession ? await deriveSessionId(openaiSession, env.SESSION_HMAC_SECRET || 'juicebox-mcp-session-key') : null);
+      (openaiSession ? await deriveSessionId(openaiSession, env.SESSION_HMAC_SECRET) : null);
 
     // The room this MCP session is bound to: the one join_room stored, else the
     // room named by the session id. Looked up at most once per request, and only

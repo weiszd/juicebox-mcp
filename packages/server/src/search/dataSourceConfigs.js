@@ -1,28 +1,19 @@
 /**
  * Data Source Configuration Registry
  * 
- * Centralized registry for Hi-C contact map data sources.
- * Based on configurations from juicebox-web project.
+ * Centralized registry for Hi-C contact map data sources. The catalog URL and
+ * columns come from the juicebox-web copy in catalogs.js; the rest is how the
+ * search pipeline reads each TSV.
  */
+
+import { encodeContactMapDatasourceConfiguration, fourdnContactMapDatasourceConfiguration } from './catalogs.js';
 
 export const DATA_SOURCES = {
   '4dn': {
     id: '4dn',
     name: '4DN',
     description: '4D Nucleome (4DN) Hi-C contact maps',
-    url: 'https://s3.amazonaws.com/igv.org.app/4dn/hic/4dn_hic.txt',
-    columns: [
-      'Project',
-      'Assembly',
-      'Biosource',
-      'Assay',
-      'Dataset',
-      'Publications',
-      'Lab',
-      'Replicate',
-      'Accession',
-      'Experiment'
-    ],
+    ...fourdnContactMapDatasourceConfiguration,
     parserType: 'tsv',
     urlColumn: 0, // First column is the URL
     nameColumn: 'Dataset' // Use Dataset column as display name
@@ -31,17 +22,7 @@ export const DATA_SOURCES = {
     id: 'encode',
     name: 'ENCODE',
     description: 'ENCODE Hi-C contact maps',
-    url: 'https://s3.amazonaws.com/igv.org.app/encode/hic/hic.txt',
-    columns: [
-      'Assembly',
-      'Biosample',
-      'Description',
-      'BioRep',
-      'TechRep',
-      'Lab',
-      'Accession',
-      'Experiment'
-    ],
+    ...encodeContactMapDatasourceConfiguration,
     parserType: 'tsv',
     urlColumn: 'HREF', // Column named 'HREF' contains relative path
     urlPrefix: 'https://www.encodeproject.org', // Prefix for ENCODE URLs
