@@ -47,10 +47,10 @@ export function observe(hic, send) {
     // juicebox.js 4.6.0 does not pass `dragging` to callbacks yet, so until it does every change is debounced.
     onLocusChange: ({ dragging }) => locusChanged(dragging),
     onColorScaleChange: ({ colorScale, browser }) =>
-      emit(SyncEventType.COLOR_SCALE_CHANGE, colorScalePayload(colorScale, browser.getDisplayMode())),
+      emit(SyncEventType.COLOR_SCALE_CHANGE, colorScalePayload(colorScale, browser)),
     // The colour picker edits the scale in place without firing onColorScaleChange.
     onForegroundColorChange: ({ browser }) =>
-      emit(SyncEventType.COLOR_SCALE_CHANGE, colorScalePayload(browser.getColorScale(), browser.getDisplayMode())),
+      emit(SyncEventType.COLOR_SCALE_CHANGE, colorScalePayload(browser.getColorScale(), browser)),
     onBackgroundColorChange: ({ rgb }) => emit(SyncEventType.BACKGROUND_COLOR_CHANGE, { color: rgb }),
     onNormalizationChange: ({ normalization }) => emit(SyncEventType.NORMALIZATION_CHANGE, { normalization }),
     // A peer mirrors what is drawn, not what was asked for (juicebox.js ADR-0012).
@@ -254,7 +254,8 @@ export function observe(hic, send) {
 const isSigned = (colorScale) => colorScale.positiveScale !== undefined;
 
 /** A scale and the display mode it belongs to. The threshold widget stores what was typed, a string. */
-function colorScalePayload(colorScale, displayMode) {
+function colorScalePayload(colorScale, browser) {
+  const displayMode = browser.getDisplayMode();
   const threshold = Number(colorScale.getThreshold());
   if (isSigned(colorScale)) {
     return {

@@ -159,11 +159,11 @@ const viewOf = (hic) => ({ displayMode: hic.current.getDisplayMode(), threshold:
 const syncEventsOf = (socket) => socket.sent.filter((m) => m.type === 'syncEvent');
 
 // Two pages whose viewports give the same A threshold and different B ones.
-const senderAuto = { A: 21.48, B: 16.77 };
-const peerAuto = { A: 21.48, B: 12.5 };
+const senderAutoThresholds = { A: 21.48, B: 16.77 };
+const peerAutoThresholds = { A: 21.48, B: 12.5 };
 
 beforeEach(() => {
-  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] });
+  vi.useFakeTimers();
 });
 afterEach(() => {
   vi.useRealTimers();
@@ -172,8 +172,8 @@ afterEach(() => {
 describe('colour scale across a display-mode switch', () => {
   it('the peer ends each switch on the sender’s threshold for the new mode', async () => {
     const room = fakeRoom();
-    const sender = fakeHic(senderAuto);
-    const peer = fakeHic(peerAuto);
+    const sender = fakeHic(senderAutoThresholds);
+    const peer = fakeHic(peerAutoThresholds);
     await join(room, sender);
     await join(room, peer);
 
@@ -188,8 +188,8 @@ describe('colour scale across a display-mode switch', () => {
 
   it('applying them sends nothing back, not even the auto threshold the peer’s own switch computes', async () => {
     const room = fakeRoom();
-    const sender = fakeHic(senderAuto);
-    const peer = fakeHic(peerAuto);
+    const sender = fakeHic(senderAutoThresholds);
+    const peer = fakeHic(peerAutoThresholds);
     await join(room, sender);
     const { socket: peerSocket } = await join(room, peer);
 
@@ -202,8 +202,8 @@ describe('colour scale across a display-mode switch', () => {
 
   it('the peer switches once per switch of the sender’s', async () => {
     const room = fakeRoom();
-    const sender = fakeHic(senderAuto);
-    const peer = fakeHic(peerAuto);
+    const sender = fakeHic(senderAutoThresholds);
+    const peer = fakeHic(peerAutoThresholds);
     await join(room, sender);
     await join(room, peer);
 
@@ -214,8 +214,8 @@ describe('colour scale across a display-mode switch', () => {
 
   it('a late joiner catching up from that peer gets the sender’s threshold', async () => {
     const room = fakeRoom();
-    const sender = fakeHic(senderAuto);
-    const peer = fakeHic(peerAuto);
+    const sender = fakeHic(senderAutoThresholds);
+    const peer = fakeHic(peerAutoThresholds);
     const { remote: senderRemote } = await join(room, sender);
     await join(room, peer);
     await sender.current.setDisplayMode('B');
