@@ -30,6 +30,13 @@ new_classes = ["WebSocketRoom"]
 BROWSER_URL = "https://jbmcp.3dg.io"
 TINYURL_DOMAIN = "t.3dg.io"
 TINYURL_ENDPOINT = "https://api.tinyurl.com/create"
+# Pages that may open /ws (exact Origin match). WebSockets are not covered by CORS.
+ALLOWED_ORIGINS = [
+  "https://aidenlab.org",
+  "https://juicebox-web.pages.dev",
+  "http://localhost:5173",
+  "http://127.0.0.1:5173",
+]
 
 # Secrets (set via `wrangler secret put`):
 # TINYURL_API_KEY

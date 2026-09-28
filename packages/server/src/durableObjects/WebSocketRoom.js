@@ -1,6 +1,9 @@
+import { MessageType, isSyncEvent } from '@aidenlab/juicebox-remote/protocol';
+import { logInfo, logError } from '../lib/logger.js';
+
 /**
  * Durable Object for managing WebSocket connections between the MCP server and browser clients.
- * One instance per session (keyed by sessionId).
+ * One instance per room (keyed by room id).
  * Uses the Hibernation API for cost-efficient idle connections.
  */
 export class WebSocketRoom {
@@ -56,9 +59,11 @@ export class WebSocketRoom {
     const pair = new WebSocketPair();
     const [client, server] = Object.values(pair);
 
-    // Accept the WebSocket with the hibernation API
+    // Accept the WebSocket with the hibernation API. The room id (set by the Worker)
+    // rides on the socket: a hibernated Durable Object does not know its own name.
     this.state.acceptWebSocket(server);
-    console.log(`[DO] WebSocket accepted. Total connections: ${this.state.getWebSockets().length}`);
+    server.serializeAttachment({ room: new URL(request.url).searchParams.get('room') });
+    logInfo(`[DO] WebSocket accepted. Total connections: ${this.state.getWebSockets().length}`);
 
     return new Response(null, { status: 101, webSocket: client });
   }
@@ -68,7 +73,7 @@ export class WebSocketRoom {
    */
   sendToClient(command) {
     const websockets = this.state.getWebSockets();
-    console.log(`[DO sendToClient] command=${command.type} websockets=${websockets.length}`);
+    logInfo(`[DO sendToClient] command=${command.type} websockets=${websockets.length}`);
     if (websockets.length === 0) {
       return Response.json({ sent: false, error: 'No browser connected' }, { status: 404 });
     }
@@ -79,9 +84,9 @@ export class WebSocketRoom {
       try {
         ws.send(message);
         sent++;
-        console.log(`[DO sendToClient] sent to WebSocket`);
+        logInfo(`[DO sendToClient] sent to WebSocket`);
       } catch (e) {
-        console.error(`[DO sendToClient] error sending:`, e);
+        logError(`[DO sendToClient] error sending:`, e);
       }
     }
 
@@ -178,9 +183,9 @@ export class WebSocketRoom {
     try {
       const data = JSON.parse(typeof message === 'string' ? message : new TextDecoder().decode(message));
 
-      // Handle session registration (backward compat with existing protocol)
-      if (data.type === 'registerSession') {
-        ws.send(JSON.stringify({ type: 'sessionRegistered', sessionId: data.sessionId }));
+      // The socket already reached this room via /ws?room=; `join` confirms which one.
+      if (data.type === MessageType.JOIN) {
+        ws.send(JSON.stringify({ type: MessageType.JOINED, room: ws.deserializeAttachment().room }));
         return;
       }
 
@@ -214,8 +219,8 @@ export class WebSocketRoom {
         return;
       }
 
-      // Sync events: relay to all OTHER browsers in the same session
-      if (data.type === 'syncEvent') {
+      // Sync events: relay to all OTHER pages in the room
+      if (isSyncEvent(data)) {
         const websockets = this.state.getWebSockets();
         const msg = JSON.stringify(data);
         for (const other of websockets) {
@@ -228,7 +233,7 @@ export class WebSocketRoom {
 
       // Other messages are ignored (browser might send debug info, etc.)
     } catch (error) {
-      console.error('Error parsing WebSocket message:', error);
+      logError('Error parsing WebSocket message:', error);
     }
   }
 
@@ -242,6 +247,6 @@ export class WebSocketRoom {
   }
 
   webSocketError(ws, error) {
-    console.error('WebSocket error in Durable Object:', error);
+    logError('WebSocket error in Durable Object:', error);
   }
 }

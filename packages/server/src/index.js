@@ -2,7 +2,7 @@
  * Cloudflare Worker entry point for Juicebox MCP Server.
  *
  * Routes:
- *   GET  /ws              - WebSocket upgrade → Durable Object (browser communication)
+ *   GET  /ws?room=        - WebSocket upgrade → the room's Durable Object (pages); Origin allow-list
  *   POST /mcp             - MCP protocol (tool calls, initialization)
  *   GET  /mcp             - 405 (SSE not supported; JSON responses only)
  *   DELETE /mcp           - MCP protocol (session termination)
@@ -32,6 +32,17 @@ async function deriveSessionId(value, secret) {
   return Array.from(new Uint8Array(sig)).map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
+const CROCKFORD_BASE32 = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
+
+/**
+ * Mint a room id: 10 Crockford base32 characters (~50 bits), short enough for a
+ * small join-link QR, long enough to be unguessable (design §5.4).
+ */
+function mintRoomId() {
+  const bytes = crypto.getRandomValues(new Uint8Array(10));
+  return Array.from(bytes, b => CROCKFORD_BASE32[b & 31]).join('');
+}
+
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
@@ -51,15 +62,16 @@ export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
 
-    // --- WebSocket upgrade → Durable Object ---
+    // --- WebSocket upgrade → the room's Durable Object ---
     if (url.pathname === '/ws' && request.headers.get('Upgrade') === 'websocket') {
-      const sessionId = url.searchParams.get('sessionId');
-      if (!sessionId) {
-        return new Response('Missing sessionId query parameter', { status: 400 });
+      if (!env.ALLOWED_ORIGINS.includes(request.headers.get('Origin'))) {
+        return new Response('Origin not allowed', { status: 403 });
       }
-      const id = env.WEBSOCKET_ROOM.idFromName(sessionId);
-      const stub = env.WEBSOCKET_ROOM.get(id);
-      return stub.fetch(request);
+      // No room given: mint one. The Durable Object reads it back from the URL.
+      const room = url.searchParams.get('room') || mintRoomId();
+      url.searchParams.set('room', room);
+      const stub = env.WEBSOCKET_ROOM.get(env.WEBSOCKET_ROOM.idFromName(room));
+      return stub.fetch(new Request(url, request));
     }
 
     // --- CORS preflight for /mcp ---

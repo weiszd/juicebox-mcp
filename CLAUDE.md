@@ -18,7 +18,8 @@ The pre-v2 prototype (Node `.mcpb` server, vendored viewer, Vite frontend) is pr
 ```bash
 npm install                    # installs both workspaces
 
-# Tests (vitest at the root runs packages/*/test/**/*.test.js)
+# Tests (vitest projects: `remote` in Node; `server` inside workerd via
+# @cloudflare/vitest-pool-workers, Worker + Durable Object from wrangler.toml)
 npm test                       # watch
 npm run test:run               # single run
 npm run test:run -- packages/server/test/search.test.js   # one file
@@ -29,7 +30,7 @@ npm run dev:server             # wrangler dev on :8787
 npm run deploy:server          # wrangler deploy
 ```
 
-Server config lives in `packages/server/wrangler.toml` (`[vars]`: `BROWSER_URL`, `TINYURL_DOMAIN`, `TINYURL_ENDPOINT`). The `TINYURL_API_KEY` secret is set with `wrangler secret put`.
+Server config lives in `packages/server/wrangler.toml` (`[vars]`: `BROWSER_URL`, `TINYURL_DOMAIN`, `TINYURL_ENDPOINT`, `ALLOWED_ORIGINS` — the exact-match `Origin` allow-list for `/ws`). The `TINYURL_API_KEY` secret is set with `wrangler secret put`.
 
 ## Architecture
 
@@ -38,18 +39,18 @@ The server code is the prototype's Worker, moved as-is. Where it differs from th
 ### Two channels
 
 1. **MCP protocol** — client ↔ Worker over stateless Streamable HTTP on `/mcp` (JSON responses; a fresh `McpServer` per request; `GET /mcp` is rejected with 405). The MCP session id is minted on `initialize` and keys the Durable Object the session talks to.
-2. **WebSocket** — page ↔ Durable Object on `/ws?sessionId=` (the design calls this a *room* and renames the parameter; that lands with the server rooms ticket). Tool handlers never return visualization results; they push a `{type: '...'}` command into the Durable Object and the page acts on it. Commands are fire-and-forget today; per-command acks are a v2 addition.
+2. **WebSocket** — page ↔ the room's Durable Object on `/ws?room=`. The Worker refuses an `Origin` not on `ALLOWED_ORIGINS` (403) and mints a 10-char Crockford base32 room when `room` is absent; the page's `join` is answered `joined {room}`; sync events go to every other socket in the room. Tool handlers never return visualization results; they push a `{type: '...'}` command into the Durable Object and the page acts on it. Commands are fire-and-forget today; per-command acks are a v2 addition.
 
 A tool call flows: client → `/mcp` tool handler → Durable Object → WebSocket → the page (today: nothing, the prototype frontend is gone; in v2: `@aidenlab/juicebox-remote` → juicebox.js public surface).
 
 ### `packages/server`
 
-- `src/index.js` — Worker entry: routes, CORS, MCP transport, session id minting.
+- `src/index.js` — Worker entry: routes, CORS, MCP transport, session and room id minting, `/ws` Origin check.
 - `src/durableObjects/WebSocketRoom.js` — one Durable Object per room; owns the sockets, relays sync events to other peers, keeps the last saved session.
 - `src/mcp/toolHandlers.js` — the single `registerTools(mcpServer, deps)` tool catalogue. `deps` abstracts the Durable Object (`sendCommand`, `requestSessionData`, `shortenURL`, …).
 - `src/search/` — dataset search pipeline: `dataSourceConfigs` (TSV catalogs on S3, described declaratively) → `dataParsers` → `metadataEnricher` → `queryExpander` (genomics synonym dictionary) → `mapFilter` → `resultFormatter`.
 - `src/qrPng.js`, `src/urlShortener.js` — join-link QR and TinyURL helpers.
-- `src/lib/logger.js` — use `logInfo`/`logWarn`/`logError` in server code; **no `console.log` in tool paths**. `WebSocketRoom.js` still has prototype-era `console` calls; replace them when that file is next touched.
+- `src/lib/logger.js` — use `logInfo`/`logWarn`/`logError` in server code; **no `console.log` in tool paths**.
 
 ### `packages/remote`
 
