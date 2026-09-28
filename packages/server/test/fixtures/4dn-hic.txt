@@ -1,0 +1,3 @@
+url	Project	Assembly	Biosource	Assay	Replicate	Dataset	Description	Lab	Publications	Accession	Experiment
+https://4dn-open-data-public.s3.amazonaws.com/fourfront-webprod/wfoutput/3be17688-cbce-4ef9-9b94-8571c20a858e/4DNFI916JQ1Y.hic	4DN	GRCm38	cerebellar granule neuron - 14 days old	MboI	merged replicates	Hi-C on mouse cerebellar granule neurons		Tomoko Yamada, NW		4DNFI916JQ1Y	DNESDADW6RV
+https://4dn-open-data-public.s3.amazonaws.com/fourfront-webprod/wfoutput/bad90d57-68ae-441f-84b6-3da0e4b3f1b7/4DNFI5R1ECZI.hic	4DN	GRCm38	cerebellar granule neuron - 14 days old	MboI	merged replicates	Hi-C on mouse cerebellar granule neurons		Tomoko Yamada, NW		4DNFI5R1ECZI	DNESRAGM5JU

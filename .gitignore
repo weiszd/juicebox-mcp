@@ -20,6 +20,7 @@ dist/
 
 # Cloudflare Workers
 .wrangler/
+.dev.vars
 .history
 
 # Claude Code per-developer settings
