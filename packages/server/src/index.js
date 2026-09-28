@@ -165,6 +165,17 @@ async function handleMcpRequest(request, env) {
       return env.WEBSOCKET_ROOM.get(env.WEBSOCKET_ROOM.idFromName(room));
     }
 
+    async function postToRoom(path, command) {
+      const stub = await getDoStub();
+      if (!stub) return { status: 'no-page' };
+      const resp = await stub.fetch(new Request(`https://do${path}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(command)
+      }));
+      return resp.json();
+    }
+
     const deps = {
       sessionId: effectiveSessionId,
       browserUrl,
@@ -178,43 +189,15 @@ async function handleMcpRequest(request, env) {
       },
 
       // Resolves {status: 'acked', ok, result?, error?} | {status: 'unconfirmed'} | {status: 'no-page'}.
-      sendCommand: async (command) => {
+      sendCommand: (command) => {
         logInfo(`[sendCommand] type=${command.type} sessionId=${effectiveSessionId || 'NONE'}`);
-        const stub = await getDoStub();
-        if (!stub) return { status: 'no-page' };
-        const resp = await stub.fetch(new Request('https://do/send', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(command)
-        }));
-        return resp.json();
+        return postToRoom('/send', command);
       },
 
-      requestSessionData: async () => {
-        const stub = await getDoStub();
-        if (!stub) throw new Error('No session ID available');
-        const resp = await stub.fetch(new Request('https://do/request-session-data', { method: 'POST' }));
-        const result = await resp.json();
-        if (result.error) throw new Error(result.error);
-        return result.data;
-      },
-
-      requestCompressedSessionData: async () => {
-        const stub = await getDoStub();
-        if (!stub) throw new Error('No session ID available');
-        const resp = await stub.fetch(new Request('https://do/request-compressed-session-data', { method: 'POST' }));
-        const result = await resp.json();
-        if (result.error) throw new Error(result.error);
-        return result.data;
-      },
-
-      requestTrackList: async () => {
-        const stub = await getDoStub();
-        if (!stub) throw new Error('No session ID available');
-        const resp = await stub.fetch(new Request('https://do/request-track-list', { method: 'POST' }));
-        const result = await resp.json();
-        if (result.error) throw new Error(result.error);
-        return result.data;
+      // Same, but asks only the first live page; adds {status: 'closed'} if it disconnects first.
+      sendRequest: (command) => {
+        logInfo(`[sendRequest] type=${command.type} sessionId=${effectiveSessionId || 'NONE'}`);
+        return postToRoom('/request', command);
       },
 
       isBrowserConnected: async () => {
