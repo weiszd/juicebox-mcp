@@ -205,7 +205,8 @@ else
 fi
 MCP_URL="$BASE_URL/mcp"
 WS_URL="wss://${BASE_URL#https://}/ws"
-PAGE_URL="https://aidenlab.org/juicebox/"   # BROWSER_URL in wrangler.toml
+# BROWSER_URL in wrangler.toml: production, or the local juicebox-web dev server for [env.v2].
+if [[ -n "$DEPLOY_ENV" ]]; then PAGE_URL="http://localhost:5173/"; else PAGE_URL="https://aidenlab.org/juicebox/"; fi
 RESULTS_FILE="${RESULTS_FILE:-${TMPDIR:-/tmp}/juicebox-mcp-deploy-results.md}"
 RESULTS=()
 
@@ -363,10 +364,15 @@ record "Pages env has VITE_WS_URL for production and preview"
 
 # ──────────────────────────────────────────────────────────────────────────
 stage "A page to drive"
-say "Join links open $PAGE_URL. Is the room widget live there yet?"
-open_url "$PAGE_URL"
-step "Look for the room item next to Share in the navbar."
-if confirm "Is the widget there?"; then
+if [[ -n "$DEPLOY_ENV" ]]; then
+  say "Join links from $WORKER_NAME open $PAGE_URL (BROWSER_URL in [env.$DEPLOY_ENV]);"
+  say "nothing is deployed to the production site. Run a local juicebox-web with the widget:"
+  step "cd ../juicebox-web-16 (the fork worktree on branch ticket/16)"
+  step "VITE_WS_URL=$WS_URL npm run dev   # vite on http://localhost:5173"
+  PAGE_BASE="$PAGE_URL"
+  pause "Press Enter once http://localhost:5173/ loads and shows the room item next to Share"
+elif open_url "$PAGE_URL"; say "Join links open $PAGE_URL. Is the room widget live there yet?"; \
+     step "Look for the room item next to Share in the navbar."; confirm "Is the widget there?"; then
   PAGE_BASE="$PAGE_URL"
 else
   say "Then drive a local juicebox-web against the deployed server instead:"
