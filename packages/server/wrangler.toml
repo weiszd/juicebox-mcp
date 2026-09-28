@@ -92,10 +92,11 @@ name = "MCP_SESSION"
 class_name = "McpSession"
 
 [env.v2.vars]
-# juicebox-web with the room widget is not deployed anywhere yet, so join links
-# open a local juicebox-web dev server (npm run dev in the juicebox-web fork,
-# built with VITE_WS_URL=wss://juicebox-mcp-v2.<account>.workers.dev/ws).
-BROWSER_URL = "http://localhost:5173/"
+# juicebox-web with the room widget, built from the fork's ticket/16 branch and
+# uploaded to the Cloudflare Pages project juicebox-web-dev (scripts/deploy-web-dev.sh).
+# For a local juicebox-web dev server instead, override in .dev.vars or use
+# http://localhost:5173/.
+BROWSER_URL = "https://juicebox-v2.3dg.io/"
 TINYURL_DOMAIN = "t.3dg.io"
 TINYURL_ENDPOINT = "https://api.tinyurl.com/create"
 ALLOWED_ORIGINS = [
@@ -106,6 +107,7 @@ ALLOWED_ORIGINS = [
   "https://3dg.io",
   "https://www.3dg.io",
   "https://juicebox-web.pages.dev",
+  "https://juicebox-v2.3dg.io",
   "http://localhost:5173",
   "http://127.0.0.1:5173",
 ]

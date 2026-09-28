@@ -77,7 +77,7 @@ Project conventions are in [`CLAUDE.md`](CLAUDE.md).
 
 `scripts/deploy-wizard.sh` walks a maintainer through the whole deploy: `wrangler login`, the two secrets, `wrangler deploy`, probing `/mcp` and `/ws` on the custom domain, setting `VITE_WS_URL` on juicebox-web's Cloudflare Pages project, and connecting each client end to end. It prints a checklist of results to paste into the ticket.
 
-To try v2 **next to** the running prototype instead of replacing it, run `DEPLOY_ENV=v2 scripts/deploy-wizard.sh`. That deploys the same code as a second Worker, `juicebox-mcp-v2`, on its `*.workers.dev` address (`[env.v2]` in `wrangler.toml`); the prototype and `jbmcp.3dg.io` are untouched, secrets are set per environment, and join links open a local juicebox-web dev server (`BROWSER_URL` in that block). Cutover later is moving `routes` into `[env.v2]`, or deploying without `DEPLOY_ENV`.
+To try v2 **next to** the running prototype instead of replacing it, run `DEPLOY_ENV=v2 scripts/deploy-wizard.sh`. That deploys the same code as a second Worker, `juicebox-mcp-v2`, on its `*.workers.dev` address (`[env.v2]` in `wrangler.toml`); the prototype and `jbmcp.3dg.io` are untouched, secrets are set per environment, and join links open a local juicebox-web dev server (`BROWSER_URL` in that block). The matching page is the Pages project `juicebox-web-dev` at https://juicebox-v2.3dg.io/, built from the juicebox-web fork's `ticket/16` worktree and uploaded with `scripts/deploy-web-dev.sh` (`BROWSER_URL` in `[env.v2]` points there). Cutover later is moving `routes` into `[env.v2]`, or deploying without `DEPLOY_ENV`.
 
 Configuration lives in `packages/server/wrangler.toml`:
 
