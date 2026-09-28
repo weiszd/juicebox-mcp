@@ -280,6 +280,26 @@ describe('join link and join_room', () => {
     expect(text(result)).toContain(`?room=${session}`);
   });
 
+  it('get_juicebox_url is an MCP App: the tool names the view, which frames the page (ticket 23)', async () => {
+    const session = await newSession();
+    const tools = (await (await rpc('tools/list', {}, { 'mcp-session-id': session })).json()).result.tools;
+    const tool = tools.find((t) => t.name === 'get_juicebox_url');
+    expect(tool._meta.ui.resourceUri).toBe('ui://juicebox/view');
+    expect(tool._meta['ui/resourceUri']).toBe('ui://juicebox/view'); // legacy key, older hosts
+
+    const listed = (await (await rpc('resources/list', {}, { 'mcp-session-id': session })).json()).result.resources;
+    expect(listed.map((r) => r.uri)).toEqual(expect.arrayContaining(['ui://juicebox/view', 'juicebox://datasource/4dn', 'juicebox://datasource/encode']));
+    const encode = (await (await rpc('resources/read', { uri: 'juicebox://datasource/encode' }, { 'mcp-session-id': session })).json()).result.contents[0];
+    expect(JSON.parse(encode.text).columns).toBeDefined();
+    const view = (await (await rpc('resources/read', { uri: 'ui://juicebox/view' }, { 'mcp-session-id': session })).json()).result.contents[0];
+    expect(view.mimeType).toBe('text/html;profile=mcp-app');
+    expect(view.text).toContain('<iframe');
+    const result = await callTool(session, 'get_juicebox_url');
+    const link = text(result).match(/https?:\/\/\S+/)[0];
+    expect(view._meta.ui.csp.frameDomains).toEqual([new URL(link).origin]);
+    expect(result.structuredContent).toEqual({ room: session, joinUrl: link });
+  });
+
   it('get_juicebox_url gives the join link as a clickable link, not a code block', async () => {
     const session = await newSession();
     const result = await callTool(session, 'get_juicebox_url');

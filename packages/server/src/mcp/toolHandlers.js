@@ -8,6 +8,8 @@
 
 import { z } from 'zod';
 import { generateQRPng } from '../qrPng.js';
+import { registerAppTool, RESOURCE_MIME_TYPE } from '@modelcontextprotocol/ext-apps/server';
+import { VIEW_URI, VIEW_HTML, viewMeta } from './juiceboxView.js';
 import { DATA_SOURCES, getDataSource, getAllSourceIds, isValidSource } from '../search/dataSourceConfigs.js';
 import { parseDataSource } from '../search/dataParsers.js';
 import { filterMaps } from '../search/mapFilter.js';
@@ -94,36 +96,23 @@ export function registerTools(mcpServer, deps) {
     return { result: outcome.result };
   }
 
-  // Register MCP resources for data source configurations
-  mcpServer.setResourceRequestHandlers({
-    list: async () => ({
-      resources: [
-        {
-          uri: 'juicebox://datasource/4dn',
-          name: '4DN Contact Map Data Source',
-          description: '4DN Hi-C contact map data source configuration',
-          mimeType: 'application/json'
-        },
-        {
-          uri: 'juicebox://datasource/encode',
-          name: 'ENCODE Contact Map Data Source',
-          description: 'ENCODE Hi-C contact map data source configuration',
-          mimeType: 'application/json'
-        }
-      ]
-    }),
-    read: async (request) => {
-      const { uri } = request.params;
-      if (uri === 'juicebox://datasource/4dn') {
-        const config = getDataSource('4dn');
-        return { contents: [{ uri, mimeType: 'application/json', text: JSON.stringify(config, null, 2) }] };
-      } else if (uri === 'juicebox://datasource/encode') {
-        const config = getDataSource('encode');
-        return { contents: [{ uri, mimeType: 'application/json', text: JSON.stringify(config, null, 2) }] };
-      }
-      throw new Error(`Unknown resource URI: ${uri}`);
-    }
-  });
+  // MCP resources: the data source configurations and the MCP App view.
+  // (The prototype called the SDK's internal setResourceRequestHandlers() with
+  // arguments it ignores, so these were never served; registerResource is the API.)
+  for (const [key, name] of [['4dn', '4DN'], ['encode', 'ENCODE']]) {
+    mcpServer.registerResource(
+      `${name} Contact Map Data Source`,
+      `juicebox://datasource/${key}`,
+      { description: `${name} Hi-C contact map data source configuration`, mimeType: 'application/json' },
+      async (uri) => ({ contents: [{ uri: uri.href, mimeType: 'application/json', text: JSON.stringify(getDataSource(key), null, 2) }] })
+    );
+  }
+  mcpServer.registerResource(
+    'Juicebox view',
+    VIEW_URI,
+    { description: 'MCP App view: the Juicebox page in the session\'s room, shown by get_juicebox_url', mimeType: RESOURCE_MIME_TYPE },
+    async (uri) => ({ contents: [{ uri: uri.href, mimeType: RESOURCE_MIME_TYPE, text: VIEW_HTML, _meta: viewMeta(browserUrl) }] })
+  );
 
   // --- Tool: load_map ---
   mcpServer.registerTool(
@@ -549,12 +538,16 @@ export function registerTools(mcpServer, deps) {
   );
 
   // --- Tool: get_juicebox_url ---
-  mcpServer.registerTool(
+  // An MCP Apps host renders VIEW_URI (the viewer, framed in the pane) for this
+  // tool and reads structuredContent; other hosts get the text link and the QR.
+  registerAppTool(
+    mcpServer,
     'get_juicebox_url',
     {
       title: 'Get Juicebox URL',
-      description: 'Get the join link to open in your browser to connect the Juicebox visualization app to the room bound to this MCP session. Use this when users ask how to connect, how to open the Juicebox app, or say things like "Hello juicebox", "Open juicebox", "Show me juicebox", "Launch juicebox", etc. Present the link to the user as a clickable link (a plain URL or markdown link, never inside a code block) so one click opens Juicebox in their browser; the QR code image the tool also returns lets them open the same room on a phone or another device, so show it too.',
-      inputSchema: {}
+      description: 'Open Juicebox connected to the room bound to this MCP session. Use this when users ask how to connect, how to open the Juicebox app, or say things like "Hello juicebox", "Open juicebox", "Show me juicebox", "Launch juicebox", etc. In hosts that render MCP Apps the viewer appears in the app pane. Also present the join link to the user as a clickable link (a plain URL or markdown link, never inside a code block) so one click opens Juicebox in their browser; the QR code image the tool also returns lets them open the same room on a phone or another device, so show it too.',
+      inputSchema: {},
+      _meta: { ui: { resourceUri: VIEW_URI } }
     },
     async () => {
       const room = await getRoom();
@@ -593,7 +586,7 @@ export function registerTools(mcpServer, deps) {
         // QR generation is best-effort
       }
 
-      return { content };
+      return { content, structuredContent: { room, joinUrl: connectionUrl } };
     }
   );
 
