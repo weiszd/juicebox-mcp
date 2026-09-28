@@ -29,10 +29,15 @@ export class WebSocketRoom {
       return this.handleWebSocketUpgrade(request);
     }
 
-    // Worker sends a command to every page in the room
+    // Worker sends a command to every page in the room, naming the tool that sent it first (§5.2)
     if (url.pathname === '/send') {
-      const command = await request.json();
-      return Response.json(await this.sendToClient(command, this.state.getWebSockets()));
+      const { tool, command } = await request.json();
+      const websockets = this.state.getWebSockets();
+      const notice = JSON.stringify({ type: MessageType.TOOL_CALL, name: tool });
+      for (const ws of websockets) {
+        try { ws.send(notice); } catch (e) { /* connection may be closing */ }
+      }
+      return Response.json(await this.sendToClient(command, websockets));
     }
 
     // Worker asks one page for data (getTrackList, getSession, getCompressedSession)
