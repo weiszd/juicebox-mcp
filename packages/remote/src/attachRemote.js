@@ -1,5 +1,8 @@
 import { WebSocketClient } from './WebSocketClient.js';
 import { MessageType, ErrorCode } from './protocol.js';
+import { applyCommand } from './applyCommand.js';
+
+const messageTypes = new Set(Object.values(MessageType));
 
 /** Values passed to `onStatus` (design §5.1). */
 export const Status = Object.freeze({
@@ -70,8 +73,30 @@ export function attachRemote({ hic, container, url, room, onStatus, onToolCall, 
         if (typeof msg.name === 'string') onToolCall?.(msg.name);
         return;
       default:
-        return; // commands, sync events and catch-up land in later tickets
+        // Anything else carrying a requestId is a command; an unknown type is acked as a failure.
+        if (typeof msg.requestId === 'string' && !messageTypes.has(msg.type)) enqueue(msg);
+        return; // sync events and catch-up land in later tickets
     }
+  }
+
+  // Commands apply one at a time in arrival order, so a gotoLocus sent after a
+  // loadMap runs against the loaded map.
+  let applying = Promise.resolve();
+  function enqueue(command) {
+    applying = applying.then(() => run(command));
+  }
+
+  async function run(command) {
+    if (client.stopped) return;
+    const ack = { type: MessageType.ACK, requestId: command.requestId };
+    try {
+      await applyCommand(hic, container, command);
+      ack.ok = true;
+    } catch (e) {
+      ack.ok = false;
+      ack.error = e instanceof Error ? e.message : String(e);
+    }
+    client.send(ack);
   }
 
   // Deferred so no status callback fires before the caller holds the return value.
