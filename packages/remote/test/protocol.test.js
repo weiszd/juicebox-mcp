@@ -30,6 +30,16 @@ describe('protocol: catalogue', () => {
     expect(ErrorCode).toEqual({ ROOM_EXPIRED: 'room-expired' });
   });
 
+  it('has no reply types besides ack (the prototype\'s six collapse into ack result/error)', () => {
+    const names = Object.values(protocol)
+      .filter((v) => typeof v === 'object')
+      .flatMap((v) => Object.values(v));
+    for (const gone of ['sessionData', 'compressedSessionData', 'trackListData']) {
+      expect(names).not.toContain(gone);
+    }
+    expect(names.filter((n) => n.endsWith('Error'))).toEqual([]);
+  });
+
   it('names every §5.2 command', () => {
     expect(Object.values(CommandType).sort()).toEqual(
       [
