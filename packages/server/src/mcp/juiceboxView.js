@@ -41,7 +41,12 @@ export const VIEW_HTML = `<!DOCTYPE html>
   const $ = (id) => document.getElementById(id);
   const app = new App({ name: "Juicebox", version: "1.0.0" });
   let joinUrl;
-  const open = (e) => { e?.preventDefault(); if (joinUrl) app.openLink({ url: joinUrl }); };
+  const open = async (e) => {
+    e?.preventDefault();
+    if (!joinUrl) return;
+    try { await app.openLink({ url: joinUrl }); $("status").textContent += " · opened"; }
+    catch (err) { $("status").textContent += " · open-link refused: " + (err?.message ?? err); }
+  };
   app.ontoolresult = ({ structuredContent: sc, content }) => {
     joinUrl = sc?.joinUrl ?? content?.find((c) => c.type === "text")?.text.match(/https?:\\/\\/\\S+/)?.[0];
     if (!joinUrl) { $("status").textContent = "No join link in the tool result."; return; }
@@ -49,6 +54,7 @@ export const VIEW_HTML = `<!DOCTYPE html>
     $("link").textContent = joinUrl; $("link").href = joinUrl; $("link").hidden = false;
     $("open").hidden = false;
     if (sc?.qrPng) { $("qr").src = "data:image/png;base64," + sc.qrPng; $("qr").hidden = false; $("hint").hidden = false; }
+    open(); // trial: ask the host to open the page without a click (ticket 23)
   };
   $("link").onclick = open;
   $("open").onclick = open;
