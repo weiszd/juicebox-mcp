@@ -1,8 +1,8 @@
 # Architecture v2 — AI control for juicebox.js as a plug-in
 
 Status: **accepted**, 2026‑09‑28 (proposed 2026‑09‑27). Supersedes §6 of
-`docs/development-notes/PORTING_MCP_TO_JUICEBOX_JS.md`, which stays as the
-historical record of the prototype. Decisions below were taken by D. Weisz;
+`docs/development-notes/PORTING_MCP_TO_JUICEBOX_JS.md` (now on branch
+`prototype` only), which stays as the historical record of the prototype. Decisions below were taken by D. Weisz;
 the hard‑to‑reverse ones are recorded in `docs/adr/`, the vocabulary in
 `CONTEXT.md`. §11 lists the answers to the open questions.
 

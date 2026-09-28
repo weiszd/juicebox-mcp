@@ -28,9 +28,10 @@ npm run test:run -- -t "substring of name"                # one test
 # Server
 npm run dev:server             # wrangler dev on :8787
 npm run deploy:server          # wrangler deploy
+scripts/deploy-wizard.sh       # maintainer deploy + onboarding, interactive (login, secrets, Pages var, clients)
 ```
 
-Server config lives in `packages/server/wrangler.toml` (`[vars]`: `BROWSER_URL`, `TINYURL_DOMAIN`, `TINYURL_ENDPOINT`, `ALLOWED_ORIGINS` — the exact-match `Origin` allow-list for `/ws`). It declares the `jbmcp.3dg.io` custom domain. Secrets `TINYURL_API_KEY` and `SESSION_HMAC_SECRET` are set with `wrangler secret put` (locally in `packages/server/.dev.vars`); without `SESSION_HMAC_SECRET` the `x-openai-session` (ChatGPT) path fails rather than using a default key.
+Server config lives in `packages/server/wrangler.toml` (`[vars]`: `BROWSER_URL`, `TINYURL_DOMAIN`, `TINYURL_ENDPOINT`, `ALLOWED_ORIGINS` — the exact-match `Origin` allow-list for `/ws`). It declares the `jbmcp.3dg.io` custom domain. Secrets `TINYURL_API_KEY` and `SESSION_HMAC_SECRET` are set with `wrangler secret put` (locally in `packages/server/.dev.vars`, from `.dev.vars.example`); without `SESSION_HMAC_SECRET` the `x-openai-session` (ChatGPT) path fails rather than using a default key.
 
 ## Architecture
 
@@ -81,7 +82,7 @@ Edit `packages/server/src/mcp/toolHandlers.js` (schema + handler); once the remo
 
 - `docs/design/ARCHITECTURE_V2.md` — the accepted design (protocol tables in §5, repo plan in §9).
 - `docs/adr/` — architecture decision records.
-- `docs/mcp-notes/`, `docs/datasource-notes/`, `docs/development-notes/` — prototype-era notes; still accurate for the search pipeline and MCP tool reference, stale where they describe the Node server or the vendored viewer.
+- Prototype-era notes (`docs/mcp-notes/`, `docs/datasource-notes/`, `docs/development-notes/`) are on branch `prototype` only (`git show prototype:docs/…`); still accurate for the search pipeline and MCP tool reference, stale where they describe the Node server or the vendored viewer.
 
 ## Agent skills
 
