@@ -105,9 +105,9 @@ export function observe(hic, send) {
     [SyncEventType.MAP_LOAD]: (browser, { url, name }) => browser.loadHicFile({ url, name }),
     [SyncEventType.CONTROL_MAP_LOAD]: (browser, { url, name }) => browser.loadHicControlFile({ url, name }),
     [SyncEventType.TRACK_LOAD]: (browser, { configs }) => {
-      // A url a track already carries, loaded or pending, is not loaded again: a loadTrack command
-      // or a restored session reaches every page, and each page's tracks load after the guard
-      // lifts (ADR-0017), so every page sends trackLoad for them.
+      // A url a track pair already carries (a pending one its own config, a loaded one its track's)
+      // is not loaded again: a loadTrack command or a restored session reaches every page, and each
+      // page's tracks load after the guard lifts (ADR-0017), so every page sends trackLoad for them.
       const held = new Set(browser.trackPairs.map(({ track, config = track.config }) => config?.url));
       const toLoad = configs.filter(({ url }) => !held.has(url));
       // Resolves once every track has loaded, so their TrackXYPairLoad events fall inside the guard.

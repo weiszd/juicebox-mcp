@@ -119,10 +119,10 @@ const ofType = (socket, type) => socket.sent.filter((m) => m.type === type);
 const savesOf = (socket) => ofType(socket, 'saveSession').map((m) => m.compressedSession);
 
 /**
- * Wait until the room's answer has been handled, which the page's first save marks.
+ * Wait until the room's answer has been handled, which the page's save loop starting marks.
  * A decompression runs off the microtask queue, so this waits in real time.
  */
-const answered = (socket) => vi.waitFor(() => expect(savesOf(socket)).not.toEqual([]));
+const answered = () => vi.waitFor(() => expect(vi.getTimerCount()).toBe(1));
 
 beforeEach(() => {
   FakeSocket.instances = [];
@@ -150,7 +150,7 @@ describe('catch-up: after joined, the room’s state is asked for and applied', 
     const hic = fakeHic();
     const { socket } = await joined(hic);
     socket.receive({ type: 'peerSessionData', compressedSession: compress(roomSession) });
-    await answered(socket);
+    await answered();
     expect(hic.restoreSession).toHaveBeenCalledWith(container, roomSession);
   });
 
@@ -163,7 +163,7 @@ describe('catch-up: after joined, the room’s state is asked for and applied', 
     const hic = fakeHic();
     const { socket } = await joined(hic);
     socket.receive({ type: 'peerSessionData', ...payload });
-    await answered(socket);
+    await answered();
     expect(hic.restoreSession).not.toHaveBeenCalled();
   });
 
@@ -255,19 +255,19 @@ describe('saved session: the page saves its compressed session when it changed',
     expect(savesOf(again)).toEqual([compress(hic.session)]);
   });
 
-  it('stops on detach, and on expiry', async () => {
-    for (const end of [(remote) => remote.detach(), (remote, socket) => socket.receive({ type: 'error', code: 'room-expired' })]) {
-      FakeSocket.instances = [];
-      const hic = fakeHic();
-      const { remote, socket } = await joined(hic);
-      socket.receive({ type: 'peerSessionData', error: 'No session available' });
-      await settle();
-      end(remote, socket);
-      hic.session = sessionOf('https://maps.example/changed.hic');
-      vi.advanceTimersByTime(60_000);
-      expect(savesOf(socket)).toHaveLength(1);
-      expect(vi.getTimerCount()).toBe(0);
-    }
+  it.each([
+    ['detach', (remote) => remote.detach()],
+    ['expiry', (remote, socket) => socket.receive({ type: 'error', code: 'room-expired' })],
+  ])('stops on %s', async (_label, end) => {
+    const hic = fakeHic();
+    const { remote, socket } = await joined(hic);
+    socket.receive({ type: 'peerSessionData', error: 'No session available' });
+    await settle();
+    end(remote, socket);
+    hic.session = sessionOf('https://maps.example/changed.hic');
+    vi.advanceTimersByTime(60_000);
+    expect(savesOf(socket)).toHaveLength(1);
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it('a page detached while restoring does not start saving', async () => {
@@ -285,21 +285,37 @@ describe('saved session: the page saves its compressed session when it changed',
   });
 });
 
-describe('snapshot then join: the page restored a ?session= snapshot before attaching', () => {
-  it('room state present: the restore overwrites the snapshot, and the room’s state is what is saved', async () => {
-    const hic = fakeHic(); // the snapshot is the page's state
+describe('snapshot then join: the page restored the session from a snapshot link before attaching', () => {
+  it('room state present: the room’s session replaces the page’s, and is what the page saves', async () => {
+    const hic = fakeHic(); // pageSession came from the snapshot link
     const { socket } = await joined(hic);
     socket.receive({ type: 'peerSessionData', compressedSession: compress(roomSession) });
-    await answered(socket);
+    await answered();
     expect(hic.restoreSession).toHaveBeenCalledWith(container, roomSession);
     expect(savesOf(socket)).toEqual([compress(roomSession)]);
   });
 
-  it('room empty: the page’s state becomes the room’s first saved session', async () => {
+  it('room empty: the page’s session becomes the room’s first saved session', async () => {
     const { socket } = await joined(fakeHic());
     socket.receive({ type: 'peerSessionData', error: 'No session available' });
     await settle();
     expect(socket.sent.slice(2)).toEqual([{ type: 'saveSession', compressedSession: compress(pageSession) }]);
+  });
+
+  it.each([
+    ['its restore failed', { session: roomSession }, (hic) => hic.restoreSession.mockRejectedValueOnce(new Error('map failed'))],
+    ['its saved session is unreadable', { compressedSession: 'session=blob:not-deflate' }, () => {}],
+  ])('room state present but not shown (%s): the page does not overwrite it until the page changes', async (_label, payload, arrange) => {
+    const hic = fakeHic();
+    arrange(hic);
+    const { socket } = await joined(hic);
+    socket.receive({ type: 'peerSessionData', ...payload });
+    await answered();
+    vi.advanceTimersByTime(30_000);
+    expect(savesOf(socket)).toEqual([]);
+    hic.session = sessionOf('https://maps.example/changed.hic');
+    vi.advanceTimersByTime(10_000);
+    expect(savesOf(socket)).toEqual([compress(hic.session)]);
   });
 });
 

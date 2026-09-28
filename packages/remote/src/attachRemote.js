@@ -2,7 +2,7 @@ import { WebSocketClient } from './WebSocketClient.js';
 import { MessageType, ErrorCode, isSyncEvent } from './protocol.js';
 import { applyCommand } from './applyCommand.js';
 import { observe } from './observe.js';
-import { sessionToRestore } from './catchUp.js';
+import { sessionToRestore } from './sessionToRestore.js';
 
 const messageTypes = new Set(Object.values(MessageType));
 
@@ -21,9 +21,9 @@ export const Status = Object.freeze({
  * Attach a juicebox.js viewer to a room on the juicebox-mcp server.
  * Design: docs/design/ARCHITECTURE_V2.md §5.1.
  *
- * Once joined, the room's state, if it has any, replaces the page's (§7), so a
- * host that restores a `?session=` snapshot attaches after that restore has
- * resolved: the snapshot then seeds an empty room and yields to one with state.
+ * Once joined, the room's session, if it has one, replaces the page's (§7), so
+ * a host that opens a snapshot link attaches after restoring its session: that
+ * session then seeds an empty room and yields to one with state.
  *
  * @param {object} opts
  * @param {object} opts.hic                 the juicebox.js namespace import
@@ -130,20 +130,23 @@ export function attachRemote({ hic, container, url, room, onStatus, onToolCall, 
     client.send(ack);
   }
 
-  // The page saves its state only once the room has answered, so it never overwrites
-  // the room's state with its own before hearing it.
+  // The page saves its session only once the room has answered, so it never overwrites
+  // the room's with its own before hearing it.
   async function catchUp(answer) {
     if (caughtUp || client.stopped) return;
     caughtUp = true;
+    let failed = false;
     try {
       const session = await sessionToRestore(answer);
       // The room already shows it. restoreSession replaces the browser; the observer follows.
       if (session) await observer.guard(() => hic.restoreSession(container, session));
     } catch {
-      // Unreadable, or the restore failed: the page stays as it is, with no one to tell.
+      failed = true; // unreadable, or the restore failed: the page stays as it is, with no one to tell
     }
     if (client.stopped) return;
-    saveSession();
+    // The room wins (§7): one this page failed to show keeps its session until the page changes.
+    if (failed) lastSaved = hic.compressedSession();
+    else saveSession();
     saveTimer = setInterval(saveSession, SAVE_INTERVAL_MS);
   }
 
