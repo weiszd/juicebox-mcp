@@ -280,6 +280,17 @@ describe('join link and join_room', () => {
     expect(text(result)).toContain(`?room=${session}`);
   });
 
+  it('get_juicebox_url gives the join link as a clickable link, not a code block', async () => {
+    const session = await newSession();
+    const result = await callTool(session, 'get_juicebox_url');
+
+    const link = text(result).match(/https?:\/\/\S+/)[0];
+    expect(text(result)).not.toContain('```');
+    expect(text(result)).toContain(`[Open Juicebox](${link})`);
+    const resourceLink = result.content.find((c) => c.type === 'resource_link');
+    expect(resourceLink.uri).toBe(link);
+  });
+
   it('after join_room, get_juicebox_url returns that room\'s join link and its QR decodes to it', async () => {
     const session = await newSession();
     const room = await newSession(); // any other room id

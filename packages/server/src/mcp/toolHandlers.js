@@ -553,7 +553,7 @@ export function registerTools(mcpServer, deps) {
     'get_juicebox_url',
     {
       title: 'Get Juicebox URL',
-      description: 'Get the join link to open in your browser to connect the Juicebox visualization app to the room bound to this MCP session. Use this when users ask how to connect, how to open the Juicebox app, or say things like "Hello juicebox", "Open juicebox", "Show me juicebox", "Launch juicebox", etc. This tool returns a QR code as an image content block. Always display the QR code image to the user so they can scan it to open the session on another device.',
+      description: 'Get the join link to open in your browser to connect the Juicebox visualization app to the room bound to this MCP session. Use this when users ask how to connect, how to open the Juicebox app, or say things like "Hello juicebox", "Open juicebox", "Show me juicebox", "Launch juicebox", etc. Present the link to the user as a clickable link (a plain URL or markdown link, never inside a code block) so one click opens Juicebox in their browser; the QR code image the tool also returns lets them open the same room on a phone or another device, so show it too.',
       inputSchema: {}
     },
     async () => {
@@ -565,10 +565,20 @@ export function registerTools(mcpServer, deps) {
       joinLink.searchParams.set('room', room);
       const connectionUrl = joinLink.toString();
 
+      // A bare URL and a markdown link: chat clients render both as clickable; a
+      // code block would not be. The resource_link is the same link for clients that
+      // render link content blocks.
       const content = [
         {
           type: 'text',
-          text: `Open this URL to launch Juicebox:\n\n\`\`\`\n${connectionUrl}\n\`\`\``
+          text: `Juicebox join link for room ${room}:\n${connectionUrl}\n\n[Open Juicebox](${connectionUrl})`
+        },
+        {
+          type: 'resource_link',
+          uri: connectionUrl,
+          name: 'Open Juicebox',
+          description: `Join link for Juicebox room ${room}`,
+          mimeType: 'text/html'
         }
       ];
 
