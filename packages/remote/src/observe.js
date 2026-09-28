@@ -46,10 +46,11 @@ export function observe(hic, send) {
   const callbacks = {
     // juicebox.js 4.6.0 does not pass `dragging` to callbacks yet, so until it does every change is debounced.
     onLocusChange: ({ dragging }) => locusChanged(dragging),
-    onColorScaleChange: ({ colorScale }) => emit(SyncEventType.COLOR_SCALE_CHANGE, colorScalePayload(colorScale)),
+    onColorScaleChange: ({ colorScale, browser }) =>
+      emit(SyncEventType.COLOR_SCALE_CHANGE, colorScalePayload(colorScale, browser.getDisplayMode())),
     // The colour picker edits the scale in place without firing onColorScaleChange.
     onForegroundColorChange: ({ browser }) =>
-      emit(SyncEventType.COLOR_SCALE_CHANGE, colorScalePayload(browser.getColorScale())),
+      emit(SyncEventType.COLOR_SCALE_CHANGE, colorScalePayload(browser.getColorScale(), browser.getDisplayMode())),
     onBackgroundColorChange: ({ rgb }) => emit(SyncEventType.BACKGROUND_COLOR_CHANGE, { color: rgb }),
     onNormalizationChange: ({ normalization }) => emit(SyncEventType.NORMALIZATION_CHANGE, { normalization }),
     // A peer mirrors what is drawn, not what was asked for (juicebox.js ADR-0012).
@@ -102,9 +103,13 @@ export function observe(hic, send) {
 
   const appliers = {
     [SyncEventType.LOCUS_CHANGE]: (browser, { syncState }) => browser.syncState(syncState),
-    [SyncEventType.COLOR_SCALE_CHANGE]: async (browser, { threshold, isRatio, positive, negative, r, g, b }) => {
+    [SyncEventType.COLOR_SCALE_CHANGE]: async (browser, { displayMode, threshold, isRatio, positive, negative, r, g, b }) => {
+      // A switch announces the new mode's threshold before the mode (juicebox.js's render inside
+      // setDisplayMode fires onColorScaleChange), and A and B keep a threshold each, so the scale
+      // goes to the mode it was sent from.
+      if (displayMode && browser.getDisplayMode() !== displayMode) await browser.setDisplayMode(displayMode);
       const colorScale = browser.getColorScale();
-      // One-map and two-map scales do not mix; the display mode syncs on its own.
+      // One-map and two-map scales do not mix.
       if (Boolean(isRatio) !== isSigned(colorScale)) return;
       if (isRatio) {
         colorScale.setColorComponents(positive, '+');
@@ -113,12 +118,15 @@ export function observe(hic, send) {
         colorScale.setColorComponents({ r, g, b });
       }
       browser.contactMatrixView.setColorScale(colorScale);
-      await browser.setColorScaleThreshold(threshold); // also invalidates the tiles, so it repaints
+      await browser.setColorScaleThreshold(Number(threshold)); // also invalidates the tiles, so it repaints
     },
     [SyncEventType.BACKGROUND_COLOR_CHANGE]: (browser, { color: { r, g, b } }) =>
       browser.contactMatrixView.setBackgroundColor({ r, g, b }),
     [SyncEventType.NORMALIZATION_CHANGE]: (browser, { normalization }) => browser.setNormalization(normalization),
-    [SyncEventType.DISPLAY_MODE_CHANGE]: (browser, { displayMode }) => browser.setDisplayMode(displayMode),
+    // The colorScaleChange sent ahead of it has usually switched this page already.
+    [SyncEventType.DISPLAY_MODE_CHANGE]: async (browser, { displayMode }) => {
+      if (browser.getDisplayMode() !== displayMode) await browser.setDisplayMode(displayMode);
+    },
     [SyncEventType.MAP_LOAD]: (browser, { url, name }) => browser.loadHicFile({ url, name }),
     [SyncEventType.CONTROL_MAP_LOAD]: (browser, { url, name }) => browser.loadHicControlFile({ url, name }),
     [SyncEventType.TRACK_LOAD]: (browser, { configs }) => {
@@ -245,10 +253,12 @@ export function observe(hic, send) {
 /** A SignedColorScale (the two-map display modes) has a positive and a negative scale. */
 const isSigned = (colorScale) => colorScale.positiveScale !== undefined;
 
-function colorScalePayload(colorScale) {
-  const threshold = colorScale.getThreshold();
+/** A scale and the display mode it belongs to. The threshold widget stores what was typed, a string. */
+function colorScalePayload(colorScale, displayMode) {
+  const threshold = Number(colorScale.getThreshold());
   if (isSigned(colorScale)) {
     return {
+      displayMode,
       threshold,
       isRatio: true,
       positive: colorScale.getColorComponents('+'),
@@ -256,5 +266,5 @@ function colorScalePayload(colorScale) {
     };
   }
   const { r, g, b } = colorScale.getColorComponents();
-  return { threshold, r, g, b };
+  return { displayMode, threshold, r, g, b };
 }
