@@ -38,15 +38,16 @@ The server code is the prototype's Worker, moved as-is. Where it differs from th
 
 ### Two channels
 
-1. **MCP protocol** — client ↔ Worker over stateless Streamable HTTP on `/mcp` (JSON responses; a fresh `McpServer` per request; `GET /mcp` is rejected with 405). The MCP session id is minted on `initialize` and keys the Durable Object the session talks to.
-2. **WebSocket** — page ↔ the room's Durable Object on `/ws?room=`. The Worker refuses an `Origin` not on `ALLOWED_ORIGINS` (403) and mints a 10-char Crockford base32 room when `room` is absent; the page's `join` is answered `joined {room}`; sync events go to every other socket in the room. Tool handlers never return visualization results; they push a `{type: '...'}` command into the Durable Object and the page acts on it. Commands are fire-and-forget today; per-command acks are a v2 addition.
+1. **MCP protocol** — client ↔ Worker over stateless Streamable HTTP on `/mcp` (JSON responses; a fresh `McpServer` per request; `GET /mcp` is rejected with 405). The MCP session id is minted on `initialize` as a room id (or derived by HMAC from `x-openai-session`); the session is bound to that room until `join_room` rebinds it.
+2. **WebSocket** — page ↔ the room's Durable Object on `/ws?room=`. The Worker refuses an `Origin` not on `ALLOWED_ORIGINS` (403) and mints a 10-char Crockford base32 room when `room` is absent; the page's `join` is answered `joined {room}`; sync events go to every other socket in the room. Tool handlers never return visualization results; they push a `{type: '...'}` command into the bound room's Durable Object, which adds a `requestId`, sends it to every page, and waits up to 10 s for the first `ack`. No page → error result; no ack → "sent, unconfirmed".
 
 A tool call flows: client → `/mcp` tool handler → Durable Object → WebSocket → the page (today: nothing, the prototype frontend is gone; in v2: `@aidenlab/juicebox-remote` → juicebox.js public surface).
 
 ### `packages/server`
 
 - `src/index.js` — Worker entry: routes, CORS, MCP transport, session and room id minting, `/ws` Origin check.
-- `src/durableObjects/WebSocketRoom.js` — one Durable Object per room; owns the sockets, relays sync events to other peers, keeps the last saved session.
+- `src/durableObjects/WebSocketRoom.js` — one Durable Object per room; owns the sockets, relays sync events to other peers, fans commands out and waits for acks, keeps the last saved session.
+- `src/durableObjects/McpSession.js` — one Durable Object per MCP session; stores the room `join_room` bound it to.
 - `src/mcp/toolHandlers.js` — the single `registerTools(mcpServer, deps)` tool catalogue. `deps` abstracts the Durable Object (`sendCommand`, `requestSessionData`, `shortenURL`, …).
 - `src/search/` — dataset search pipeline: `dataSourceConfigs` (TSV catalogs on S3, described declaratively) → `dataParsers` → `metadataEnricher` → `queryExpander` (genomics synonym dictionary) → `mapFilter` → `resultFormatter`.
 - `src/qrPng.js`, `src/urlShortener.js` — join-link QR and TinyURL helpers.

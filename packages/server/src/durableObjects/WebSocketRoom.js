@@ -1,5 +1,8 @@
-import { MessageType, isSyncEvent } from '@aidenlab/juicebox-remote/protocol';
+import { MessageType, isSyncEvent, isAck } from '@aidenlab/juicebox-remote/protocol';
 import { logInfo, logError } from '../lib/logger.js';
+
+/** How long a command waits for its first ack before the tool reports "sent, unconfirmed" (§5.4). */
+const ACK_TIMEOUT_MS = 10_000;
 
 /**
  * Durable Object for managing WebSocket connections between the MCP server and browser clients.
@@ -12,6 +15,8 @@ export class WebSocketRoom {
     this.env = env;
     // Map of requestId -> { resolve, reject, timer } for pending data requests
     this.pendingRequests = new Map();
+    // Map of requestId -> { resolve, timer } for commands awaiting their first ack
+    this.pendingAcks = new Map();
   }
 
   async fetch(request) {
@@ -69,28 +74,39 @@ export class WebSocketRoom {
   }
 
   /**
-   * Send a command to all connected browser WebSockets.
+   * Send a command, with a fresh requestId, to every page in the room and wait for
+   * the first ack. Answers {status: 'acked', ok, result?, error?}, {status: 'unconfirmed'}
+   * when no ack arrives within ACK_TIMEOUT_MS, or {status: 'no-page'}.
    */
-  sendToClient(command) {
+  async sendToClient(command) {
     const websockets = this.state.getWebSockets();
     logInfo(`[DO sendToClient] command=${command.type} websockets=${websockets.length}`);
-    if (websockets.length === 0) {
-      return Response.json({ sent: false, error: 'No browser connected' }, { status: 404 });
-    }
 
-    const message = JSON.stringify(command);
+    const requestId = crypto.randomUUID();
+    const message = JSON.stringify({ ...command, requestId });
     let sent = 0;
     for (const ws of websockets) {
       try {
         ws.send(message);
         sent++;
-        logInfo(`[DO sendToClient] sent to WebSocket`);
       } catch (e) {
         logError(`[DO sendToClient] error sending:`, e);
       }
     }
+    if (sent === 0) return Response.json({ status: 'no-page' });
 
-    return Response.json({ sent: sent > 0, count: sent });
+    // Registered before this handler yields, so no ack can arrive ahead of it.
+    const ack = new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        this.pendingAcks.delete(requestId);
+        resolve(null);
+      }, ACK_TIMEOUT_MS);
+      this.pendingAcks.set(requestId, { resolve, timer });
+    });
+
+    const reply = await ack;
+    if (!reply) return Response.json({ status: 'unconfirmed' });
+    return Response.json({ status: 'acked', ok: reply.ok, result: reply.result, error: reply.error });
   }
 
   /**
@@ -186,6 +202,17 @@ export class WebSocketRoom {
       // The socket already reached this room via /ws?room=; `join` confirms which one.
       if (data.type === MessageType.JOIN) {
         ws.send(JSON.stringify({ type: MessageType.JOINED, room: ws.deserializeAttachment().room }));
+        return;
+      }
+
+      // The first ack for a command resolves it; later acks from other pages are dropped.
+      if (isAck(data)) {
+        const pending = this.pendingAcks.get(data.requestId);
+        if (pending) {
+          this.pendingAcks.delete(data.requestId);
+          clearTimeout(pending.timer);
+          pending.resolve(data);
+        }
         return;
       }
 

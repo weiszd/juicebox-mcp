@@ -6,53 +6,16 @@
  * room answers a socket in order, so anything sent to that page before the
  * barrier arrives before its `joined`.
  */
-import { SELF, env } from 'cloudflare:test';
+import { env } from 'cloudflare:test';
 import { describe, it, expect, afterEach } from 'vitest';
 import { MessageType, SyncEventType } from '@aidenlab/juicebox-remote/protocol';
+import { ORIGIN, upgrade, openPage, join, closePages, track } from './pages.js';
 
-const ORIGIN = 'http://localhost:5173'; // on the wrangler.toml allow-list
 const ROOM_ID = /^[0-9A-HJKMNP-TV-Z]{10}$/; // Crockford base32: no I, L, O, U
 
 const locusChange = { type: MessageType.SYNC_EVENT, syncType: SyncEventType.LOCUS_CHANGE, locus: 'chr1:1-1000' };
 
-function upgrade(query = '', origin = ORIGIN) {
-  const headers = { Upgrade: 'websocket' };
-  if (origin) headers.Origin = origin;
-  return SELF.fetch(`https://jbmcp.test/ws${query}`, { headers });
-}
-
-const open = [];
-afterEach(() => {
-  for (const ws of open.splice(0)) ws.close();
-});
-
-/** Open a page socket; `next()` resolves with the next message it receives. */
-async function openPage(query) {
-  const res = await upgrade(query);
-  expect(res.status).toBe(101);
-  const ws = res.webSocket;
-  ws.accept();
-  open.push(ws);
-
-  const queued = [];
-  const waiting = [];
-  ws.addEventListener('message', (event) => {
-    const msg = JSON.parse(event.data);
-    const resolve = waiting.shift();
-    if (resolve) resolve(msg);
-    else queued.push(msg);
-  });
-
-  return {
-    send: (msg) => ws.send(JSON.stringify(msg)),
-    next: () => (queued.length ? Promise.resolve(queued.shift()) : new Promise((r) => waiting.push(r))),
-  };
-}
-
-function join(page, room) {
-  page.send(room ? { type: MessageType.JOIN, room } : { type: MessageType.JOIN });
-  return page.next();
-}
+afterEach(closePages);
 
 describe('join', () => {
   it('join with a room id answers joined with that room', async () => {
@@ -107,7 +70,7 @@ describe('Origin allow-list', () => {
       const res = await upgrade('', origin);
       expect(res.status, origin).toBe(101);
       res.webSocket.accept();
-      open.push(res.webSocket);
+      track(res.webSocket);
     }
   });
 

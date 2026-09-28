@@ -23,6 +23,9 @@ function hexToRgb(hex) {
   } : null;
 }
 
+// Room ids: 10 Crockford base32 characters (design §5.4)
+const ROOM_ID = /^[0-9A-HJKMNP-TV-Z]{10}$/i;
+
 // Zod schema for color input
 const colorSchema = z.string().regex(/^#[0-9A-Fa-f]{6}$/, 'Must be a hex color code (e.g., "#ff0000")')
   .describe('Hex color code (e.g., "#ff0000")');
@@ -32,7 +35,9 @@ const colorSchema = z.string().regex(/^#[0-9A-Fa-f]{6}$/, 'Must be a hex color c
  *
  * @param {McpServer} mcpServer
  * @param {object} deps
- * @param {function} deps.sendCommand - (command) => void, sends command to browser via DO
+ * @param {function} deps.sendCommand - (command) => Promise<{status, ok?, result?, error?}>, sends to every page in the room
+ * @param {function} deps.getRoom - () => Promise<string|null>, the room bound to this MCP session
+ * @param {function} deps.bindRoom - (room) => Promise<void>, rebinds this MCP session to a room
  * @param {function} deps.requestSessionData - () => Promise<object>, gets session JSON from browser
  * @param {function} deps.requestCompressedSessionData - () => Promise<string>, gets compressed session
  * @param {function} deps.isBrowserConnected - () => Promise<boolean>
@@ -48,11 +53,32 @@ export function registerTools(mcpServer, deps) {
     requestCompressedSessionData,
     requestTrackList,
     isBrowserConnected,
+    getRoom,
+    bindRoom,
     sessionId,
     browserUrl,
     shortenURL,
     log
   } = deps;
+
+  /**
+   * Send a command to the bound room and report what the first page's ack said:
+   * `text` on ok, the page's error on not ok, "sent, unconfirmed" on no ack in 10 s,
+   * and an error when no page is connected (design §5.4).
+   */
+  async function runCommand(command, text) {
+    const outcome = await sendCommand(command);
+    if (outcome.status === 'no-page') {
+      return { content: [{ type: 'text', text: 'Error: No page is connected to this room. Use get_juicebox_url to get the join link and open it in a browser.' }], isError: true };
+    }
+    if (outcome.status === 'unconfirmed') {
+      return { content: [{ type: 'text', text: `${text} (sent, unconfirmed: no page acknowledged within 10 s)` }] };
+    }
+    if (!outcome.ok) {
+      return { content: [{ type: 'text', text: `Error: ${outcome.error || `the page could not apply ${command.type}`}` }], isError: true };
+    }
+    return { content: [{ type: 'text', text }] };
+  }
 
   // Register MCP resources for data source configurations
   mcpServer.setResourceRequestHandlers({
@@ -99,8 +125,7 @@ export function registerTools(mcpServer, deps) {
       }
     },
     async ({ url, name, normalization, locus }) => {
-      await sendCommand({ type: 'loadMap', url, name, normalization, locus });
-      return { content: [{ type: 'text', text: `Loading map from ${url}${name ? ` (${name})` : ''}` }] };
+      return runCommand({ type: 'loadMap', url, name, normalization, locus }, `Loading map from ${url}${name ? ` (${name})` : ''}`);
     }
   );
 
@@ -117,8 +142,7 @@ export function registerTools(mcpServer, deps) {
       }
     },
     async ({ url, name, normalization }) => {
-      await sendCommand({ type: 'loadControlMap', url, name, normalization });
-      return { content: [{ type: 'text', text: `Loading control map from ${url}${name ? ` (${name})` : ''}` }] };
+      return runCommand({ type: 'loadControlMap', url, name, normalization }, `Loading control map from ${url}${name ? ` (${name})` : ''}`);
     }
   );
 
@@ -170,9 +194,8 @@ export function registerTools(mcpServer, deps) {
           throw new Error('Invalid session format: must contain "browsers" array or browser config');
         }
 
-        await sendCommand({ type: 'loadSession', sessionData: parsedSession });
         const browserCount = parsedSession.browsers ? parsedSession.browsers.length : 1;
-        return { content: [{ type: 'text', text: `Session loaded successfully. Restored ${browserCount} browser(s).` }] };
+        return await runCommand({ type: 'loadSession', sessionData: parsedSession }, `Session loaded successfully. Restored ${browserCount} browser(s).`);
       } catch (error) {
         log.logError(`Error loading session: ${error.message}`);
         return { content: [{ type: 'text', text: `Error loading session: ${error.message}` }], isError: true };
@@ -192,8 +215,7 @@ export function registerTools(mcpServer, deps) {
       }
     },
     async ({ centerX, centerY }) => {
-      await sendCommand({ type: 'zoomIn', centerX, centerY });
-      return { content: [{ type: 'text', text: 'Zooming in' }] };
+      return runCommand({ type: 'zoomIn', centerX, centerY }, 'Zooming in');
     }
   );
 
@@ -209,8 +231,7 @@ export function registerTools(mcpServer, deps) {
       }
     },
     async ({ centerX, centerY }) => {
-      await sendCommand({ type: 'zoomOut', centerX, centerY });
-      return { content: [{ type: 'text', text: 'Zooming out' }] };
+      return runCommand({ type: 'zoomOut', centerX, centerY }, 'Zooming out');
     }
   );
 
@@ -230,8 +251,7 @@ export function registerTools(mcpServer, deps) {
       if (!rgb) {
         return { content: [{ type: 'text', text: `Invalid color: ${color}. Please use a hex code (e.g., "#ff0000")` }], isError: true };
       }
-      await sendCommand({ type: 'setForegroundColor', color: rgb, threshold });
-      return { content: [{ type: 'text', text: `Map foreground color set to ${color}${threshold ? ` with threshold ${threshold}` : ''}` }] };
+      return runCommand({ type: 'setForegroundColor', color: rgb, threshold }, `Map foreground color set to ${color}${threshold ? ` with threshold ${threshold}` : ''}`);
     }
   );
 
@@ -248,8 +268,7 @@ export function registerTools(mcpServer, deps) {
       if (!rgb) {
         return { content: [{ type: 'text', text: `Invalid color: ${color}. Please use a hex code (e.g., "#000000")` }], isError: true };
       }
-      await sendCommand({ type: 'setBackgroundColor', color: rgb });
-      return { content: [{ type: 'text', text: `Map background color set to ${color}` }] };
+      return runCommand({ type: 'setBackgroundColor', color: rgb }, `Map background color set to ${color}`);
     }
   );
 
@@ -268,9 +287,8 @@ export function registerTools(mcpServer, deps) {
       if (action === 'set' && (value === undefined || value === null)) {
         return { content: [{ type: 'text', text: 'A positive numeric value is required when action is "set"' }], isError: true };
       }
-      await sendCommand({ type: 'setColorScale', action, value });
       const desc = action === 'set' ? `set to ${value}` : action === 'increase' ? 'increased (doubled)' : 'decreased (halved)';
-      return { content: [{ type: 'text', text: `Color scale threshold ${desc}` }] };
+      return runCommand({ type: 'setColorScale', action, value }, `Color scale threshold ${desc}`);
     }
   );
 
@@ -307,8 +325,7 @@ export function registerTools(mcpServer, deps) {
       if (resolvedColor) command.color = resolvedColor;
       if (preset?.type) command.trackType = preset.type;
       if (preset?.format) command.format = preset.format;
-      await sendCommand(command);
-      return { content: [{ type: 'text', text: `Loading track${resolvedName ? ` "${resolvedName}"` : ''} from ${resolvedUrl}` }] };
+      return runCommand(command, `Loading track${resolvedName ? ` "${resolvedName}"` : ''} from ${resolvedUrl}`);
     }
   );
 
@@ -324,7 +341,6 @@ export function registerTools(mcpServer, deps) {
       }
     },
     async ({ normalization }) => {
-      await sendCommand({ type: 'setNormalization', normalization });
       const normNames = {
         NONE: 'None',
         VC: 'Coverage (VC)',
@@ -334,7 +350,7 @@ export function registerTools(mcpServer, deps) {
         INTER_SCALE: 'INTER_SCALE',
         GW_SCALE: 'GW_SCALE'
       };
-      return { content: [{ type: 'text', text: `Normalization set to ${normNames[normalization] || normalization}` }] };
+      return runCommand({ type: 'setNormalization', normalization }, `Normalization set to ${normNames[normalization] || normalization}`);
     }
   );
 
@@ -370,8 +386,7 @@ export function registerTools(mcpServer, deps) {
       }
     },
     async ({ track }) => {
-      await sendCommand({ type: 'removeTrack', track });
-      return { content: [{ type: 'text', text: `Removing track: ${track}` }] };
+      return runCommand({ type: 'removeTrack', track }, `Removing track: ${track}`);
     }
   );
 
@@ -392,8 +407,7 @@ export function registerTools(mcpServer, deps) {
         const rgb = hexToRgb(color);
         if (rgb) command.color = rgb;
       }
-      await sendCommand(command);
-      return { content: [{ type: 'text', text: color ? `Setting track "${track}" color to ${color}` : `Resetting track "${track}" color to default` }] };
+      return runCommand(command, color ? `Setting track "${track}" color to ${color}` : `Resetting track "${track}" color to default`);
     }
   );
 
@@ -409,8 +423,7 @@ export function registerTools(mcpServer, deps) {
       }
     },
     async ({ track, name }) => {
-      await sendCommand({ type: 'setTrackName', track, name });
-      return { content: [{ type: 'text', text: `Renaming track "${track}" to "${name}"` }] };
+      return runCommand({ type: 'setTrackName', track, name }, `Renaming track "${track}" to "${name}"`);
     }
   );
 
@@ -427,8 +440,7 @@ export function registerTools(mcpServer, deps) {
       }
     },
     async ({ track, min, max }) => {
-      await sendCommand({ type: 'setTrackDataRange', track, min, max });
-      return { content: [{ type: 'text', text: `Setting track "${track}" data range to [${min}, ${max}]` }] };
+      return runCommand({ type: 'setTrackDataRange', track, min, max }, `Setting track "${track}" data range to [${min}, ${max}]`);
     }
   );
 
@@ -444,8 +456,7 @@ export function registerTools(mcpServer, deps) {
       }
     },
     async ({ track, enabled }) => {
-      await sendCommand({ type: 'setTrackAutoscale', track, enabled });
-      return { content: [{ type: 'text', text: `${enabled ? 'Enabling' : 'Disabling'} autoscale for track "${track}"` }] };
+      return runCommand({ type: 'setTrackAutoscale', track, enabled }, `${enabled ? 'Enabling' : 'Disabling'} autoscale for track "${track}"`);
     }
   );
 
@@ -461,8 +472,7 @@ export function registerTools(mcpServer, deps) {
       }
     },
     async ({ track, enabled }) => {
-      await sendCommand({ type: 'setTrackLogScale', track, enabled });
-      return { content: [{ type: 'text', text: `${enabled ? 'Enabling' : 'Disabling'} log scale for track "${track}"` }] };
+      return runCommand({ type: 'setTrackLogScale', track, enabled }, `${enabled ? 'Enabling' : 'Disabling'} log scale for track "${track}"`);
     }
   );
 
@@ -527,6 +537,7 @@ export function registerTools(mcpServer, deps) {
           text: `Server Status:\n\n` +
             `Mode: Cloudflare Workers\n` +
             `Current Session ID: ${sessionId || 'none'}\n` +
+            `Room: ${(await getRoom()) || 'none'}\n` +
             `Browser Connected: ${connected ? 'Yes' : 'No'}\n` +
             `Browser URL: ${browserUrl}`
         }]
@@ -539,14 +550,17 @@ export function registerTools(mcpServer, deps) {
     'get_juicebox_url',
     {
       title: 'Get Juicebox URL',
-      description: 'Get the URL to open in your browser to connect the Juicebox visualization app. Use this when users ask how to connect, how to open the Juicebox app, or say things like "Hello juicebox", "Open juicebox", "Show me juicebox", "Launch juicebox", etc. This tool returns a QR code as an image content block. Always display the QR code image to the user so they can scan it to open the session on another device.',
+      description: 'Get the join link to open in your browser to connect the Juicebox visualization app to the room bound to this MCP session. Use this when users ask how to connect, how to open the Juicebox app, or say things like "Hello juicebox", "Open juicebox", "Show me juicebox", "Launch juicebox", etc. This tool returns a QR code as an image content block. Always display the QR code image to the user so they can scan it to open the session on another device.',
       inputSchema: {}
     },
     async () => {
-      if (!sessionId) {
+      const room = await getRoom();
+      if (!room) {
         return { content: [{ type: 'text', text: 'Error: No active session found. Please ensure the MCP connection is properly initialized.' }], isError: true };
       }
-      const connectionUrl = `${browserUrl}?sessionId=${sessionId}`;
+      const joinLink = new URL(browserUrl);
+      joinLink.searchParams.set('room', room);
+      const connectionUrl = joinLink.toString();
 
       const content = [
         {
@@ -567,6 +581,27 @@ export function registerTools(mcpServer, deps) {
       }
 
       return { content };
+    }
+  );
+
+  // --- Tool: join_room ---
+  mcpServer.registerTool(
+    'join_room',
+    {
+      title: 'Join Room',
+      description: 'Bind this MCP session to an existing room, e.g. one a page started whose join link (…?room=<id>) the user pasted into chat. Later tools drive the pages in that room, and get_juicebox_url returns its join link.',
+      inputSchema: {
+        room: z.string().regex(ROOM_ID, 'Must be a 10-character room id').describe('Room id: the value of the room parameter in the join link')
+      }
+    },
+    async ({ room }) => {
+      if (!sessionId) {
+        return { content: [{ type: 'text', text: 'Error: No active session found. Please ensure the MCP connection is properly initialized.' }], isError: true };
+      }
+      room = room.toUpperCase();
+      await bindRoom(room);
+      const connected = await isBrowserConnected();
+      return { content: [{ type: 'text', text: `Joined room ${room}. ${connected ? 'A page is connected.' : 'No page is connected yet.'}` }] };
     }
   );
 
@@ -735,7 +770,6 @@ Just ask:
       if (!locus) {
         return { content: [{ type: 'text', text: 'Error: Locus specification is required' }], isError: true };
       }
-      await sendCommand({ type: 'gotoLocus', locus });
       let locusDisplay;
       if (typeof locus === 'string') {
         locusDisplay = locus;
@@ -746,7 +780,7 @@ Just ask:
       } else {
         locusDisplay = JSON.stringify(locus);
       }
-      return { content: [{ type: 'text', text: `Navigating to locus: ${locusDisplay}` }] };
+      return runCommand({ type: 'gotoLocus', locus }, `Navigating to locus: ${locusDisplay}`);
     }
   );
 
