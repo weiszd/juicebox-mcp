@@ -55,7 +55,16 @@ A tool call flows: client → `/mcp` tool handler → Durable Object → WebSock
 
 ### `packages/remote`
 
-Public entry will be `attachRemote({hic, container, url, room?, ...})` (design §5). Currently holds the prototype's reconnecting `WebSocketClient.js`; the protocol module, command applier and observer land in later tickets.
+Publishable to npm as plain ESM, no build step; exports `.` (`src/attachRemote.js`) and `./protocol` (`src/protocol.js`, imported by the server too). The API, statuses and "no UI" contract are in `packages/remote/README.md`; the design is §5.
+
+- `src/attachRemote.js` — `attachRemote({hic, container, url, room?, onStatus?, onToolCall?, createSocket?})` → `{room, joinUrl, detach}`. Joins the room, catches up from it (the room wins, §7), auto-saves the session, and runs commands, peers' sync events and catch-up one at a time in arrival order.
+- `src/protocol.js` — message catalogue and validators (§5.4).
+- `src/applyCommand.js` — one command → calls on juicebox.js's public surface (§5.2).
+- `src/observe.js` — viewer changes → sync events, and applying peers' sync events without echoing them (§5.3).
+- `src/sessionToRestore.js` — decodes and validates the room's saved session.
+- `src/WebSocketClient.js` — the prototype's reconnecting client, with an injected socket factory.
+
+The package never imports juicebox.js: the host passes its namespace as `hic`, and `juicebox.js >=4.6.0 <5` is a peer dependency. Tests drive `attachRemote` with a fake `hic` and a fake socket. The root `.npmrc` sets `legacy-peer-deps` only because 4.6.0 is not on npm yet (remove it once it is). Publishing: a GitHub release tagged `remote-v<version>` runs `.github/workflows/publish-remote.yml` (npm trusted publishing).
 
 ### Adding or changing a tool
 

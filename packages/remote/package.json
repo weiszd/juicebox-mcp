@@ -1,12 +1,42 @@
 {
   "name": "@aidenlab/juicebox-remote",
   "version": "2.0.0",
-  "private": true,
   "type": "module",
   "description": "Attach a juicebox.js viewer to a juicebox-mcp room so an LLM can drive it and peers stay in sync",
   "license": "MIT",
+  "author": {
+    "name": "Jim Robinson"
+  },
+  "contributors": [
+    {
+      "name": "Douglass Turner"
+    }
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aidenlab/juicebox-mcp.git",
+    "directory": "packages/remote"
+  },
+  "bugs": {
+    "url": "https://github.com/aidenlab/juicebox-mcp/issues"
+  },
+  "keywords": [
+    "juicebox",
+    "hic",
+    "mcp",
+    "visualization"
+  ],
   "exports": {
     ".": "./src/attachRemote.js",
     "./protocol": "./src/protocol.js"
+  },
+  "files": [
+    "src/"
+  ],
+  "peerDependencies": {
+    "juicebox.js": ">=4.6.0 <5"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }
