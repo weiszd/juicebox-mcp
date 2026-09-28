@@ -7,6 +7,11 @@ compatibility_flags = ["nodejs_compat"]
 routes = [
   { pattern = "jbmcp.3dg.io", custom_domain = true },
 ]
+# No *.workers.dev hostname and no preview URLs: jbmcp.3dg.io is the one public
+# address MCP clients and pages are given, so there is no second entry point to
+# keep in sync or to leave behind when the domain moves.
+workers_dev = false
+preview_urls = false
 
 [observability]
 enabled = false
@@ -40,17 +45,24 @@ tag = "v2"
 new_classes = ["McpSession"]
 
 [vars]
-BROWSER_URL = "https://jbmcp.3dg.io"
+# juicebox-web, the page join links and snapshot links open (not this Worker).
+# The trailing slash matters: the app is served under /juicebox/ with relative assets.
+# For `wrangler dev`, override it in .dev.vars (see .dev.vars.example).
+BROWSER_URL = "https://aidenlab.org/juicebox/"
 TINYURL_DOMAIN = "t.3dg.io"
 TINYURL_ENDPOINT = "https://api.tinyurl.com/create"
 # Pages that may open /ws (exact Origin match). WebSockets are not covered by CORS.
 ALLOWED_ORIGINS = [
   "https://aidenlab.org",
+  "http://www.aidenlab.org",
+  "https://juicebox.aidenlab.org",
+  "https://3dg.io",
+  "https://www.3dg.io",
   "https://juicebox-web.pages.dev",
   "http://localhost:5173",
   "http://127.0.0.1:5173",
 ]
 
-# Secrets (set via `wrangler secret put`; for `wrangler dev`, in .dev.vars):
+# Secrets (set via `wrangler secret put`, see scripts/deploy-wizard.sh; for `wrangler dev`, in .dev.vars):
 # TINYURL_API_KEY      - TinyURL API token for create_shareable_url; unset → links are not shortened
 # SESSION_HMAC_SECRET  - HMAC key deriving room ids from x-openai-session; unset → those requests fail

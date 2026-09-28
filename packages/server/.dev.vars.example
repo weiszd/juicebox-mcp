@@ -1,0 +1,11 @@
+# Copy to .dev.vars for `wrangler dev`. Never commit .dev.vars — it is gitignored.
+# Values here override wrangler.toml [vars]; the secrets stand in for `wrangler secret put`.
+
+# The juicebox-web dev server (vite, port 5173), so get_juicebox_url returns a local join link.
+BROWSER_URL=http://localhost:5173/
+
+# Any string works locally; without it the x-openai-session (ChatGPT) path fails.
+SESSION_HMAC_SECRET=local-dev-only
+
+# Optional. Empty → create_shareable_url returns the long snapshot link unshortened.
+TINYURL_API_KEY=
