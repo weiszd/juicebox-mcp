@@ -55,6 +55,7 @@ TINYURL_ENDPOINT = "https://api.tinyurl.com/create"
 ALLOWED_ORIGINS = [
   "https://aidenlab.org",
   "http://www.aidenlab.org",
+  "https://www.aidenlab.org",
   "https://juicebox.aidenlab.org",
   "https://3dg.io",
   "https://www.3dg.io",
