@@ -140,7 +140,7 @@ renders it from `onStatus` / `remote.joinUrl`.
 | Source (juicebox.js) | Sync event |
 |---|---|
 | `addCallback('onLocusChange')` (`dragging` in payload) | `locusChange {syncState: browser.getSyncState()}` — throttled while dragging, debounced otherwise |
-| `addCallback('onColorScale')` | `colorScaleChange` (threshold + rgb, or signed components) |
+| `addCallback('onColorScale')` | `colorScaleChange` (display mode, numeric threshold + rgb, or signed components); a peer in another mode switches to it first |
 | `addCallback('onBackgroundColorChange')` | `backgroundColorChange` |
 | `addCallback('onNormalizationChange')`, `('onNormalizationSubstituted')` | `normalizationChange` (effective value) |
 | `addCallback('onDisplayMode')` | `displayModeChange` |

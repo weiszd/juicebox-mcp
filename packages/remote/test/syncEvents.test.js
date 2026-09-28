@@ -119,8 +119,11 @@ function fakeBrowser(bus) {
       coordinator.fire('onColorScaleChange', { colorScale: browser.colorScale, browser });
     }),
     setNormalization: vi.fn((normalization) => coordinator.fire('onNormalizationChange', { normalization, browser })),
+    displayMode: 'A',
+    getDisplayMode: () => browser.displayMode,
     setDisplayMode: vi.fn(async (mode) => {
       await tick();
+      browser.displayMode = mode;
       coordinator.fire('onDisplayModeChange', { mode, browser });
     }),
     loadHicFile: vi.fn(async (config) => {
@@ -238,14 +241,18 @@ describe('sync events: §5.3 coordinator callbacks', () => {
       'onColorScaleChange (one map)',
       'onColorScaleChange',
       (b) => ({ colorScale: b.colorScale, browser: b }),
-      { syncType: 'colorScaleChange', threshold: 2000, r: 255, g: 0, b: 0 },
+      { syncType: 'colorScaleChange', displayMode: 'A', threshold: 2000, r: 255, g: 0, b: 0 },
     ],
     [
       'onColorScaleChange (two-map signed scale)',
       'onColorScaleChange',
-      (b) => ({ colorScale: signedScale, browser: b }),
+      (b) => {
+        b.displayMode = 'AOB';
+        return { colorScale: signedScale, browser: b };
+      },
       {
         syncType: 'colorScaleChange',
+        displayMode: 'AOB',
         threshold: 5,
         isRatio: true,
         positive: { r: 255, g: 0, b: 0 },
@@ -256,7 +263,7 @@ describe('sync events: §5.3 coordinator callbacks', () => {
       'onForegroundColorChange (reads the edited scale)',
       'onForegroundColorChange',
       (b) => ({ rgb: { r: 255, g: 0, b: 0 }, type: '+', browser: b }),
-      { syncType: 'colorScaleChange', threshold: 2000, r: 255, g: 0, b: 0 },
+      { syncType: 'colorScaleChange', displayMode: 'A', threshold: 2000, r: 255, g: 0, b: 0 },
     ],
     [
       'onBackgroundColorChange',
@@ -310,6 +317,15 @@ describe('sync events: §5.3 coordinator callbacks', () => {
     expect(syncEventsOf(socket)).toEqual([
       { type: 'syncEvent', syncType: 'locusChange', syncState: hic.current.getSyncState() },
     ]);
+  });
+
+  it('a threshold typed into the colour-scale widget, which stores a string, is sent as a number', async () => {
+    const hic = fakeHic();
+    const { socket } = await joined(hic);
+    hic.current.colorScale.threshold = '1234'; // juicebox.js keeps numberUnFormatter's output as typed
+    hic.current.coordinator.fire('onColorScaleChange', { colorScale: hic.current.colorScale, browser: hic.current });
+    await settle();
+    expect(syncEventsOf(socket).map((e) => e.threshold)).toEqual([1234]);
   });
 
   it('a map opened from a local file (no url) is not sent', async () => {
@@ -519,6 +535,14 @@ describe('sync events: applying a peer’s sync event', () => {
       [negative, '-'],
     ]);
     expect(hic.current.setColorScaleThreshold).toHaveBeenCalledWith(8);
+  });
+
+  it('a threshold that arrives as a string is applied as a number', async () => {
+    const hic = fakeHic();
+    const { socket } = await joined(hic);
+    socket.receive({ type: 'syncEvent', syncType: 'colorScaleChange', threshold: '750', r: 0, g: 0, b: 255 });
+    await settle();
+    expect(hic.current.setColorScaleThreshold).toHaveBeenCalledWith(750);
   });
 
   it('a colour scale for the other display-mode kind is ignored', async () => {
