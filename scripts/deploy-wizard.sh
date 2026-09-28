@@ -195,13 +195,21 @@ TOTAL_STAGES=12
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SERVER_DIR="$REPO_ROOT/packages/server"
-MCP_URL="https://jbmcp.3dg.io/mcp"
-WS_URL="wss://jbmcp.3dg.io/ws"
+# DEPLOY_ENV=v2 deploys the side-by-side trial Worker "juicebox-mcp-v2" on its
+# *.workers.dev address (wrangler.toml [env.v2]) and leaves the prototype alone.
+DEPLOY_ENV="${DEPLOY_ENV:-}"
+if [[ -n "$DEPLOY_ENV" ]]; then
+  WORKER_NAME="juicebox-mcp-$DEPLOY_ENV"; BASE_URL=""   # learned after deploy
+else
+  WORKER_NAME="juicebox-mcp"; BASE_URL="https://jbmcp.3dg.io"
+fi
+MCP_URL="$BASE_URL/mcp"
+WS_URL="wss://${BASE_URL#https://}/ws"
 PAGE_URL="https://aidenlab.org/juicebox/"   # BROWSER_URL in wrangler.toml
 RESULTS_FILE="${RESULTS_FILE:-${TMPDIR:-/tmp}/juicebox-mcp-deploy-results.md}"
 RESULTS=()
 
-wrangler() { (cd "$SERVER_DIR" && npx wrangler "$@"); }
+wrangler() { (cd "$SERVER_DIR" && npx wrangler "$@" ${DEPLOY_ENV:+--env "$DEPLOY_ENV"}); }
 
 # record "check" asks whether a check passed and keeps the answer for the summary.
 record() {
@@ -230,14 +238,19 @@ banner "juicebox-mcp: deploy and onboard"
 
 # ──────────────────────────────────────────────────────────────────────────
 stage "Before you start"
-say "This deploys the Worker 'juicebox-mcp' from $SERVER_DIR"
-say "to $MCP_URL, then checks each MCP client against it."
+say "This deploys the Worker '$WORKER_NAME' from $SERVER_DIR"
+say "to ${BASE_URL:-its *.workers.dev address}, then checks each MCP client against it."
 note "Needs: npm install done at the repo root; curl; a Cloudflare account that owns"
 note "the 3dg.io zone and the juicebox-web Pages project; the TinyURL account behind t.3dg.io."
 printf '\n'
-warn "The Worker name is the prototype's: deploying replaces the running prototype."
-warn "wrangler.toml sets workers_dev = false: the *.workers.dev URL stops answering,"
-warn "so any client still pointed there must move to $MCP_URL."
+if [[ -n "$DEPLOY_ENV" ]]; then
+  note "Side-by-side trial (DEPLOY_ENV=$DEPLOY_ENV): the prototype Worker and jbmcp.3dg.io are not touched."
+else
+  warn "The Worker name is the prototype's: deploying replaces the running prototype."
+  warn "wrangler.toml sets workers_dev = false: the *.workers.dev URL stops answering,"
+  warn "so any client still pointed there must move to $MCP_URL."
+  note "To try v2 next to the prototype instead, re-run with DEPLOY_ENV=v2."
+fi
 confirm "Go ahead on those terms?" || { say "Stopped. Nothing changed."; exit 0; }
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -296,6 +309,10 @@ note "If it fails because jbmcp.3dg.io already has a DNS record (the prototype's
 note "record under dash.cloudflare.com → 3dg.io → DNS → Records, then re-run this wizard."
 if confirm "Deploy now?"; then
   wrangler deploy
+  if [[ -n "$DEPLOY_ENV" ]]; then
+    ask BASE_URL "Base URL wrangler printed (https://juicebox-mcp-$DEPLOY_ENV.<account>.workers.dev)"
+    BASE_URL="${BASE_URL%/}"; MCP_URL="$BASE_URL/mcp"; WS_URL="wss://${BASE_URL#https://}/ws"
+  fi
 else
   say "Stopped before deploying."; exit 0
 fi
@@ -309,15 +326,15 @@ hdrs=$(curl -s -o /dev/null -D - --max-time 15 -X POST "$MCP_URL" \
   -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"deploy-wizard","version":"0"}}}' || true)
 room=$(printf '%s' "$hdrs" | tr -d '\r' | awk -F': ' 'tolower($1)=="mcp-session-id"{print $2}')
 if [[ "$room" =~ ^[0-9A-HJKMNP-TV-Z]{10}$ ]]; then
-  auto "/mcp initialize answers on jbmcp.3dg.io with a room id ($room)" ok
+  auto "/mcp initialize answers on ${BASE_URL#https://} with a room id ($room)" ok
 else
-  auto "/mcp initialize answers on jbmcp.3dg.io with a room id" "$(printf '%s' "$hdrs" | head -n1 | tr -d '\r')"
+  auto "/mcp initialize answers on ${BASE_URL#https://} with a room id" "$(printf '%s' "$hdrs" | head -n1 | tr -d '\r')"
 fi
 code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 "$MCP_URL" || true)
 [[ "$code" == 405 ]] && auto "GET /mcp is refused (405)" ok || auto "GET /mcp is refused (405)" "got $code"
 ws() { curl -s -o /dev/null -w '%{http_code}' --http1.1 --max-time 5 \
   -H 'Connection: Upgrade' -H 'Upgrade: websocket' -H 'Sec-WebSocket-Version: 13' \
-  -H 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==' -H "Origin: $1" "https://jbmcp.3dg.io/ws" || true; }
+  -H 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==' -H "Origin: $1" "$BASE_URL/ws" || true; }
 code=$(ws https://example.com)
 [[ "$code" == 403 ]] && auto "/ws refuses an unlisted Origin (403)" ok || auto "/ws refuses an unlisted Origin (403)" "got $code"
 code=$(ws https://aidenlab.org)

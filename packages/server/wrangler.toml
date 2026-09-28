@@ -67,3 +67,42 @@ ALLOWED_ORIGINS = [
 # Secrets (set via `wrangler secret put`, see scripts/deploy-wizard.sh; for `wrangler dev`, in .dev.vars):
 # TINYURL_API_KEY      - TinyURL API token for create_shareable_url; unset → links are not shortened
 # SESSION_HMAC_SECRET  - HMAC key deriving room ids from x-openai-session; unset → those requests fail
+
+# ── Side-by-side trial deployment ────────────────────────────────────────────
+# `wrangler deploy --env v2` publishes this same code as a second Worker,
+# "juicebox-mcp-v2", on its *.workers.dev address, leaving the prototype Worker
+# "juicebox-mcp" and jbmcp.3dg.io untouched. Named environments inherit nothing
+# below `[vars]` and `durable_objects`, so both are repeated here; migrations
+# are top-level and apply to every environment. Secrets are per environment:
+# `wrangler secret put <NAME> --env v2`. Cutover later = move `routes` here.
+[env.v2]
+name = "juicebox-mcp-v2"
+workers_dev = true
+preview_urls = false
+
+[[env.v2.durable_objects.bindings]]
+name = "WEBSOCKET_ROOM"
+class_name = "WebSocketRoom"
+
+[[env.v2.durable_objects.bindings]]
+name = "MCP_SESSION"
+class_name = "McpSession"
+
+[env.v2.vars]
+# juicebox-web with the room widget is not deployed anywhere yet, so join links
+# open a local juicebox-web dev server (npm run dev in the juicebox-web fork,
+# built with VITE_WS_URL=wss://juicebox-mcp-v2.<account>.workers.dev/ws).
+BROWSER_URL = "http://localhost:5173/"
+TINYURL_DOMAIN = "t.3dg.io"
+TINYURL_ENDPOINT = "https://api.tinyurl.com/create"
+ALLOWED_ORIGINS = [
+  "https://aidenlab.org",
+  "http://www.aidenlab.org",
+  "https://www.aidenlab.org",
+  "https://juicebox.aidenlab.org",
+  "https://3dg.io",
+  "https://www.3dg.io",
+  "https://juicebox-web.pages.dev",
+  "http://localhost:5173",
+  "http://127.0.0.1:5173",
+]
