@@ -12,7 +12,7 @@ import { parseDataSource } from '../search/dataParsers.js';
 import { filterMaps } from '../search/mapFilter.js';
 import { formatSearchResults, formatSearchResultsJSON } from '../search/resultFormatter.js';
 import { generateQRPng } from '../qrPng.js';
-import { VIEW_URI, VIEW_HTML, viewMeta, VIEW_MIME_TYPE, TOOL_META } from './juiceboxView.js';
+import { VIEW_URI, VIEW_HTML, VIEW_META, VIEW_MIME_TYPE, TOOL_META } from './juiceboxView.js';
 
 // Helper function to convert hex color to RGB
 function hexToRgb(hex) {
@@ -110,7 +110,7 @@ export function registerTools(mcpServer, deps) {
     'Juicebox join card',
     VIEW_URI,
     { description: 'MCP App view for get_juicebox_url: the join link and its QR code', mimeType: VIEW_MIME_TYPE },
-    async (uri) => ({ contents: [{ uri: uri.href, mimeType: VIEW_MIME_TYPE, text: VIEW_HTML, _meta: viewMeta(browserUrl) }] })
+    async (uri) => ({ contents: [{ uri: uri.href, mimeType: VIEW_MIME_TYPE, text: VIEW_HTML, _meta: VIEW_META }] })
   );
   // --- Tool: load_map ---
   mcpServer.registerTool(
@@ -542,7 +542,7 @@ export function registerTools(mcpServer, deps) {
     'get_juicebox_url',
     {
       title: 'Get Juicebox URL',
-      description: 'Get the join link that opens Juicebox connected to the room bound to this MCP session. Use this when users ask how to connect, how to open the Juicebox app, or say things like "Hello juicebox", "Open juicebox", "Show me juicebox", "Launch juicebox", etc. Hosts that render MCP Apps show a card with the link and its QR code; also present the link to the user as a clickable link (a plain URL or markdown link, never inside a code block) so one click opens Juicebox in their browser.',
+      description: 'Get the join link that opens Juicebox connected to the room bound to this MCP session. Use this when users ask how to connect, how to open the Juicebox app, or say things like "Hello juicebox", "Open juicebox", "Show me juicebox", "Launch juicebox", etc. If you have a browser tool (Claude\'s built-in browser or Claude in Chrome), open the join link in it right away so Juicebox appears in the side panel next to the conversation: the page connects to this session\'s room and later tool calls redraw it there. Hosts that render MCP Apps also show a card with the link and its QR code. Always present the link to the user as a clickable link too (a plain URL or markdown link, never inside a code block).',
       inputSchema: {},
       _meta: TOOL_META
     },
@@ -561,7 +561,7 @@ export function registerTools(mcpServer, deps) {
       const content = [
         {
           type: 'text',
-          text: `Juicebox join link for room ${room}:\n${connectionUrl}\n\n[Open Juicebox](${connectionUrl})`
+          text: `Juicebox join link for room ${room}:\n${connectionUrl}\n\n[Open Juicebox](${connectionUrl})\n\nNext step: if you have a browser tool, open this link in the built-in browser now so the viewer shows in the side panel; it joins room ${room} and later Juicebox tool calls redraw it there. Otherwise show the link for the user to click.`
         },
         {
           type: 'resource_link',
