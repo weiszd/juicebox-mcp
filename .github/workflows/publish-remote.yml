@@ -1,0 +1,49 @@
+name: Publish @aidenlab/juicebox-remote to npm
+
+# Publishing a GitHub release tagged remote-v<version> publishes packages/remote at that version
+# to npm. The server is deployed with wrangler, never published; a release with any other tag is
+# not this workflow's.
+#
+# Authentication is npm trusted publishing (OIDC): no npm token is stored in this repo. The
+# package's settings on npmjs.com must name this repository and this workflow file
+# (publish-remote.yml) as a trusted publisher, and the job's environment (npm) as its
+# environment. Provenance is attached automatically.
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+  id-token: write   # lets the job mint the OIDC token npm trusts
+
+jobs:
+  publish:
+    if: startsWith(github.event.release.tag_name, 'remote-v')
+    runs-on: ubuntu-latest
+    # Required reviewers on this environment make every publish wait for an approval
+    environment: npm
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24   # trusted publishing needs npm >= 11.5.1, which Node 24 ships
+          registry-url: https://registry.npmjs.org
+
+      - name: Check the release tag matches packages/remote/package.json
+        run: |
+          pkg="$(node -p "require('./packages/remote/package.json').version")"
+          if [ "${GITHUB_REF_NAME#remote-v}" != "$pkg" ]; then
+            echo "::error::Release tag $GITHUB_REF_NAME does not match packages/remote version $pkg"
+            exit 1
+          fi
+
+      # No lockfile is committed, so npm install rather than npm ci
+      - run: npm install
+
+      - run: npx vitest run
+
+      # A GitHub pre-release goes to the `next` dist-tag, so `npm install @aidenlab/juicebox-remote` is unaffected
+      - name: Publish
+        run: npm publish --workspace packages/remote --tag ${{ github.event.release.prerelease && 'next' || 'latest' }}
