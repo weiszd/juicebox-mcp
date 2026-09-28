@@ -15,6 +15,8 @@ export const MessageType = Object.freeze({
   TOOL_CALL: 'toolCall', // room → page: {name}
   SYNC_EVENT: 'syncEvent', // either way: {syncType, ...payload}
   PEER_SESSION_DATA: 'peerSessionData', // room → page: {session?|compressedSession?|error?}
+  REQUEST_SESSION_FROM_PEER: 'requestSessionFromPeer', // page → room: {}; answered with peerSessionData
+  SAVE_SESSION: 'saveSession', // page → room: {compressedSession}, kept as the room's saved session
 });
 
 /** Commands: room → page, every one carries `requestId` and gets one `ack` (§5.2). */

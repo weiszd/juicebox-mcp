@@ -472,7 +472,7 @@ describe('sync events: applying a peer’s sync event', () => {
     const { socket } = await joined(hic);
     socket.receive({ type: 'syncEvent', syncType: 'teleport' });
     await settle();
-    expect(socket.sent.filter((m) => m.type !== 'join')).toEqual([]);
+    expect(socket.sent.filter((m) => !['join', 'requestSessionFromPeer'].includes(m.type))).toEqual([]);
   });
 });
 

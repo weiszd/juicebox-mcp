@@ -26,6 +26,8 @@ describe('protocol: catalogue', () => {
       TOOL_CALL: 'toolCall',
       SYNC_EVENT: 'syncEvent',
       PEER_SESSION_DATA: 'peerSessionData',
+      REQUEST_SESSION_FROM_PEER: 'requestSessionFromPeer',
+      SAVE_SESSION: 'saveSession',
     });
     expect(ErrorCode).toEqual({ ROOM_EXPIRED: 'room-expired' });
   });

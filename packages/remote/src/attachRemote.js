@@ -2,8 +2,12 @@ import { WebSocketClient } from './WebSocketClient.js';
 import { MessageType, ErrorCode, isSyncEvent } from './protocol.js';
 import { applyCommand } from './applyCommand.js';
 import { observe } from './observe.js';
+import { sessionToRestore } from './catchUp.js';
 
 const messageTypes = new Set(Object.values(MessageType));
+
+// How often the page saves its session to the room when it changed (the prototype's number).
+const SAVE_INTERVAL_MS = 10_000;
 
 /** Values passed to `onStatus` (design §5.1). */
 export const Status = Object.freeze({
@@ -16,6 +20,10 @@ export const Status = Object.freeze({
 /**
  * Attach a juicebox.js viewer to a room on the juicebox-mcp server.
  * Design: docs/design/ARCHITECTURE_V2.md §5.1.
+ *
+ * Once joined, the room's state, if it has any, replaces the page's (§7), so a
+ * host that restores a `?session=` snapshot attaches after that restore has
+ * resolved: the snapshot then seeds an empty room and yields to one with state.
  *
  * @param {object} opts
  * @param {object} opts.hic                 the juicebox.js namespace import
@@ -35,6 +43,10 @@ export function attachRemote({ hic, container, url, room, onStatus, onToolCall, 
   let roomToJoin = room; // given by the host, or minted by the server on the first `joined`
   let joinedRoom; // set on `joined`; kept across a drop so the host can still show it
   let joinUrl;
+  let inRoom = false; // from `joined` until the socket closes
+  let caughtUp = false; // the room has answered the request for its state
+  let saveTimer;
+  let lastSaved; // the compressed session the room last received from this page
 
   const setStatus = (status) => onStatus?.(status);
 
@@ -51,7 +63,10 @@ export function attachRemote({ hic, container, url, room, onStatus, onToolCall, 
       client.send(roomToJoin ? { type: MessageType.JOIN, room: roomToJoin } : { type: MessageType.JOIN });
     },
     onMessage: handleMessage,
-    onClose: () => setStatus(Status.CLOSED),
+    onClose: () => {
+      inRoom = false;
+      setStatus(Status.CLOSED);
+    },
   });
 
   const observer = observe(hic, (msg) => client.send(msg));
@@ -63,12 +78,16 @@ export function attachRemote({ hic, container, url, room, onStatus, onToolCall, 
         if (typeof msg.room !== 'string') return;
         roomToJoin = joinedRoom = msg.room;
         joinUrl = buildJoinUrl(msg.room);
+        inRoom = true;
         setStatus(Status.OPEN);
+        // Asked again on a re-join only if unanswered: catching up would undo what the page did meanwhile.
+        if (!caughtUp) client.send({ type: MessageType.REQUEST_SESSION_FROM_PEER });
         return;
       case MessageType.ERROR:
         if (msg.code === ErrorCode.ROOM_EXPIRED) {
           client.close(); // an expired room never comes back; the host starts a new one
           observer.detach();
+          clearInterval(saveTimer);
           joinedRoom = joinUrl = undefined;
           setStatus(Status.EXPIRED);
         }
@@ -79,14 +98,17 @@ export function attachRemote({ hic, container, url, room, onStatus, onToolCall, 
       case MessageType.SYNC_EVENT:
         if (isSyncEvent(msg)) enqueue(() => observer.apply(msg));
         return;
+      case MessageType.PEER_SESSION_DATA:
+        enqueue(() => catchUp(msg));
+        return;
       default:
         // Anything else carrying a requestId is a command; an unknown type is acked as a failure.
         if (typeof msg.requestId === 'string' && !messageTypes.has(msg.type)) enqueue(() => run(msg));
-        return; // catch-up lands in a later ticket
+        return;
     }
   }
 
-  // Commands and peers' sync events apply one at a time in arrival order, so a
+  // Commands, peers' sync events and the room's state apply one at a time in arrival order, so a
   // gotoLocus sent after a loadMap runs against the loaded map.
   let applying = Promise.resolve();
   function enqueue(task) {
@@ -108,6 +130,30 @@ export function attachRemote({ hic, container, url, room, onStatus, onToolCall, 
     client.send(ack);
   }
 
+  // The page saves its state only once the room has answered, so it never overwrites
+  // the room's state with its own before hearing it.
+  async function catchUp(answer) {
+    if (caughtUp || client.stopped) return;
+    caughtUp = true;
+    try {
+      const session = await sessionToRestore(answer);
+      // The room already shows it. restoreSession replaces the browser; the observer follows.
+      if (session) await observer.guard(() => hic.restoreSession(container, session));
+    } catch {
+      // Unreadable, or the restore failed: the page stays as it is, with no one to tell.
+    }
+    if (client.stopped) return;
+    saveSession();
+    saveTimer = setInterval(saveSession, SAVE_INTERVAL_MS);
+  }
+
+  function saveSession() {
+    if (!inRoom || !hic.getCurrentBrowser()?.dataset) return; // a page with no map has nothing to save
+    const compressedSession = hic.compressedSession();
+    if (compressedSession === lastSaved) return;
+    if (client.send({ type: MessageType.SAVE_SESSION, compressedSession })) lastSaved = compressedSession;
+  }
+
   // Deferred so no status callback fires before the caller holds the return value.
   queueMicrotask(() => client.connect());
 
@@ -121,6 +167,7 @@ export function attachRemote({ hic, container, url, room, onStatus, onToolCall, 
     detach() {
       if (client.stopped) return; // already detached, or expired (which never reports closed)
       observer.detach();
+      clearInterval(saveTimer);
       client.close();
       setStatus(Status.CLOSED);
     },
