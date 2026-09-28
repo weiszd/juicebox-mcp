@@ -1,0 +1,3 @@
+# The v2 tree starts from one commit that empties the prototype; history stays on branch `prototype`
+
+The prototype mixed a vendored viewer, a Node server, a Worker and a test UI; carrying that tree into v2 would leave two servers and a dead frontend beside the new packages. Instead `main` is frozen as branch `prototype` and tag `v1.1.0-prototype`, then a single commit removes everything except the keep-list (Worker, search pipeline, shortener, docs) and the `packages/` layout is built on the clean tree. A force-pushed orphan branch was rejected because it breaks every existing clone; the empty-tree commit keeps `git log` continuous.

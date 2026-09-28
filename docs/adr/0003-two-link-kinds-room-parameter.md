@@ -1,0 +1,3 @@
+# Snapshot links and join links are distinct; the room parameter is `room`, never `session`
+
+The prototype had one "QR code" that conflated two things: a permanent URL carrying the whole serialized view (`?session=`, needs no server) and a pointer to a live relay room (`?sessionId=`, needs the server). They solve different problems and both stay, in separate UI and separate tools (`create_shareable_url` vs `get_juicebox_url`). The query parameter is renamed to `room` because "session" already means the serialized view in juicebox.js and the transport session in MCP; three meanings on one word caused the conflation.

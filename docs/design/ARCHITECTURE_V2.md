@@ -1,9 +1,10 @@
 # Architecture v2 — AI control for juicebox.js as a plug-in
 
-Status: **proposed**, 2026‑09‑27. Supersedes §6 of
+Status: **accepted**, 2026‑09‑28 (proposed 2026‑09‑27). Supersedes §6 of
 `docs/development-notes/PORTING_MCP_TO_JUICEBOX_JS.md`, which stays as the
-historical record of the prototype. Decisions below were taken by D. Weisz on
-2026‑09‑27; rationale is recorded so they can be revisited.
+historical record of the prototype. Decisions below were taken by D. Weisz;
+the hard‑to‑reverse ones are recorded in `docs/adr/`, the vocabulary in
+`CONTEXT.md`. §11 lists the answers to the open questions.
 
 ## 1. Goal
 
@@ -51,7 +52,7 @@ Dependency direction (arrows = "imports"):
 ```
 juicebox-web ──► @aidenlab/juicebox-remote ──► juicebox.js (peer dependency)
 juicebox-mcp ──► @aidenlab/juicebox-remote/protocol   (message types only)
-juicebox-mcp ──► juicebox-web catalog config          (D4; see §10 Q2)
+juicebox-mcp ──► juicebox-web catalog config          (D4; copied, see §11 Q2)
 ```
 
 Nothing imports juicebox-mcp. juicebox.js imports nothing from the others.
@@ -63,7 +64,7 @@ All additions go through `js/publicApi.js` and `test/testPublicApi.js`; no
 
 | Change | File(s) | Why |
 |---|---|---|
-| Expose existing coordinator methods as subscribable callbacks: `onColorScale(colorScale)`, `onNormalizationChange(normalization)`, `onNormalizationSubstituted(normalization, reason)`, `onDisplayMode(mode)` | `js/browserCoordinator.js` (`callbacks` map, lines ~56–62), `js/publicApi.js` `COORDINATOR_CALLBACKS` + `COORDINATOR_PAYLOAD_SHAPES` | Replaces the prototype's monkey‑patching of `notifyColorScale`, `setColorScaleThreshold`, `repaintMatrix`, `setNormalization`, `setDisplayMode`. Substitution (ADR‑0012) must be observable so a peer mirrors the *effective* normalization. |
+| New subscribable coordinator callbacks, named by the existing `on*Change` convention: `onColorScaleChange {colorScale, browser}` (fired from the existing widget‑facing `onColorScale` **and** from `setColorScaleThreshold`, which fires nothing today), `onNormalizationChange {normalization, browser}`, `onNormalizationSubstituted {requested, effective, reason, browser}`, `onDisplayModeChange {mode, browser}`. Additive: `type` (plus/minus) added to the `onForegroundColorChange` payload. | `js/browserCoordinator.js` (`callbacks` map), `js/hicBrowser.js` `setColorScaleThreshold`, `js/hicColorScaleWidget.js`, `js/publicApi.js` `COORDINATOR_CALLBACKS` + `COORDINATOR_PAYLOAD_SHAPES` | Replaces the prototype's monkey‑patching of `notifyColorScale`, `setColorScaleThreshold`, `repaintMatrix`, `setNormalization`, `setDisplayMode`. Substitution (ADR‑0012) must be observable so a peer mirrors the *effective* normalization. Ships as **juicebox.js 4.6.0**. |
 | New global event `TrackXYPairChange`, payload `{trackPair, property, value}`, posted from `TrackPair.setColor`, `setDataRange`, `setTrackLabelName`, and wherever `track.autoscale` / `track.logScale` are toggled (gear menu) | `js/trackPair.js`, `js/trackGearPopup.js`; `EVENTS_POSTED` + `EVENT_PAYLOAD_SHAPES` | The only mutations with no event today; the prototype used `Object.defineProperty` setters. |
 | Add to `BROWSER_SURFACE`: `controlDataset`, `trackPairs`, `tracks2D`, `zoomAndCenter`, `setColorScaleThreshold`, `setNormalization`, `setDisplayMode`, `getDisplayMode`, `getColorScale`, `getSyncState`, `syncState` | `js/publicApi.js` | All exist and are used by the remote layer; declaring them makes "no callers in this repo" a complete finding (ADR‑0003). |
 | `parseGotoInput` accepts the prototype's extra spellings: `chr1 10mb-20mb`, `chromosome 1`, `1:1000-2000`, `kb`/`mb` suffixes, and `{chr, start, end}` objects | `js/interactionHandler.js` (`parseGotoInput`, `parseLocusString`) + tests | Port of `normalizeLocusInput` / `parseLocusInputFlexible`. Generic locus parsing belongs in the viewer; the NLP that extracts a locus from a sentence does **not** (server, §6). |
@@ -73,8 +74,10 @@ changes — upstream already solved those differently.
 
 ## 5. `@aidenlab/juicebox-remote`
 
-Location: `juicebox-mcp/packages/remote` (npm workspace), published to npm.
-Peer dependency: `juicebox.js >= 4.5` (the version carrying §4).
+Location: `juicebox-mcp/packages/remote` (npm workspace), published to npm from
+the `aidenlab` account (which owns the `@aidenlab` scope; juicebox.js itself is
+published unscoped from the same account). Peer dependency:
+`juicebox.js >=4.6.0 <5` (the version carrying §4; 4.5.x is already released).
 
 ```
 packages/remote/
@@ -96,12 +99,17 @@ const remote = attachRemote({
   hic,                      // the juicebox.js namespace import (peer dep, no double bundle)
   container,                // element passed to hic.init / needed by hic.restoreSession
   url: 'wss://jbmcp.3dg.io/ws',
-  room: 'c0ffee…',          // from the page URL (§7)
-  onStatus: (s) => {},      // 'connecting' | 'open' | 'closed' ; optional
+  room: 'c0ffee…',          // from the page URL (§7); omit to have the server mint one
+  onStatus: (s) => {},      // 'connecting' | 'open' | 'closed' | 'expired' ; optional
   onToolCall: (name) => {}, // for a toast; optional
 })
+remote.room                 // the room id, known once status is 'open'
+remote.joinUrl              // join link for this page's URL + room
 remote.detach()             // unsubscribe everything, close socket
 ```
+
+A page may start a room with no MCP client involved (`room` omitted → server
+mints one, replies `joined {room}`), so two people can co‑view without AI.
 
 The package ships **no UI**. A host that wants a status dot, QR or toast
 renders it from `onStatus` / `remote.joinUrl`.
@@ -144,10 +152,24 @@ resulting callbacks are not re‑emitted. Same rule as the prototype.
 
 ### 5.4 Protocol (`protocol.js`)
 
-Unchanged from the prototype (`PORTING_MCP_TO_JUICEBOX_JS.md` §5) except:
-`registerSession {sessionId}` → `join {room}`; the URL query parameter
-`sessionId` → `room` (§7). Message shapes are exported as constants plus
-`isCommand(msg)` / `isSyncEvent(msg)` guards so both ends share one spelling.
+From the prototype (`PORTING_MCP_TO_JUICEBOX_JS.md` §5) with these changes:
+
+- `registerSession {sessionId}` → `join {room?}`; server replies `joined {room}`
+  (minting a room when none was given) or `error {code: 'room-expired'}`.
+  URL query parameter `sessionId` → `room` (§7).
+- **Every command carries a `requestId` and gets an `ack {requestId, ok, result?, error?}`**
+  from the remote once applied (or failed). Tools wait up to 10 s for the ack
+  and report "sent, unconfirmed" on timeout. The prototype's fire‑and‑forget
+  tools reported success even with no page connected. `ack` is the **only**
+  reply shape: the prototype's six reply types (`sessionData`,
+  `compressedSessionData`, `trackListData` and their `*Error` twins) collapse
+  into `result` / `error`. "ok" means the call on the public surface returned,
+  not that data finished loading (ADR‑0017 for tracks).
+- Room ids are server‑minted 10‑character Crockford base32 strings (~50 bits),
+  not UUIDs, so the join‑link QR stays small.
+
+Message shapes are exported as constants plus `isCommand(msg)` /
+`isSyncEvent(msg)` guards so both ends share one spelling.
 
 ## 6. `juicebox-mcp` server v2 (Worker only)
 
@@ -170,15 +192,29 @@ juicebox-mcp/
   (local); Claude Code → `claude mcp add --transport http`; ChatGPT →
   connector (existing `x-openai-session` HMAC fallback); Inspector/Cursor native.
 - **Tool changes vs prototype:**
-  - `get_juicebox_url` → returns the **join link** (§7) + QR PNG.
-  - `create_shareable_url` → returns the **snapshot link** (asks the browser for
-    `compressedSession()`, shortens via juicebox-web's `jb-shortlink` worker
-    instead of TinyURL — §10 Q3).
+  - `get_juicebox_url` → returns the **join link** (§7) + QR PNG for the room
+    bound to this MCP session (minted on `initialize`, or set by `join_room`).
+  - **New** `join_room {room}` → binds the MCP session to an existing room,
+    e.g. one a page started (§5.1) whose join link the user pasted into chat.
+  - `create_shareable_url` → returns the **snapshot link** (asks the page for
+    `compressedSession()`, shortens with TinyURL on `t.3dg.io`, the same
+    account and domain juicebox-web uses; key is a `wrangler secret`).
+    juicebox-web's `jb-shortlink` worker is a GET redirector, not a shortener.
   - `save_session` → returns the session JSON as a text result (no filesystem).
-  - `search_maps` and friends read the juicebox-web catalog config (D4).
+  - `search_maps` and friends read a copy of the juicebox-web ENCODE and 4DN
+    catalog modules (`src/search/catalogs.js`, header `source: juicebox-web
+    js/…ContactMapDatasourceConfig.js`); the AidenLab `hicfiles.json` list is a
+    later ticket.
   - Everything else: same names, same schemas.
+- **Room lifecycle (Durable Object):** the last saved session lives in DO
+  storage (the prototype already did this); an alarm deletes the room's storage
+  24 h after its last message (ADR‑0006). Request/response tools ask the first
+  live page; a socket closing rejects only that page's pending requests.
+- **Tests:** `@cloudflare/vitest-pool-workers` for the DO (join, relay to
+  others only, request/response, ack, expiry) and for tool registration.
 - **Retired:** `server.js`, esbuild bundle, express/ws/cors/dotenv deps, the
-  2.3 MB `.mcpb` at the repo root, `.history/`.
+  2.3 MB `.mcpb` at the repo root, `.history/`. `packages/connector-mcpb` is
+  deferred; the README carries the `mcp-remote` recipe instead.
 
 ### 6.4 Security baseline
 
@@ -186,8 +222,10 @@ juicebox-mcp/
   var). WebSockets are not covered by CORS.
 - Room ids are server‑minted UUIDs (or HMAC of `x-openai-session`); a client
   cannot reach a browser it was not paired with.
-- `TINYURL_API_KEY` — if kept at all — is a `wrangler secret`, never in a
-  manifest.
+- `TINYURL_API_KEY` and `SESSION_HMAC_SECRET` are `wrangler secret`s; the
+  prototype's hardcoded HMAC fallback key is removed.
+- `jbmcp.3dg.io` is declared as a custom domain in `wrangler.toml` (the
+  prototype set it only as `BROWSER_URL`).
 - OAuth (`@cloudflare/workers-oauth-provider`) is a later, additive step.
 
 ## 7. Two links, two purposes
@@ -203,7 +241,10 @@ juicebox-mcp/
 
 Both exist in juicebox-web, in different widgets, and the words *snapshot* and
 *join* are used in code, UI labels and tool descriptions. A URL may carry
-both parameters: restore the snapshot first, then join. The parameter is
+both parameters: restore the snapshot first, then join; **if the room already
+has state (a live peer or a saved session) the room wins**, and the snapshot
+only seeds an empty room. juicebox.js ignores a lone `?room=` (its query
+adapter claims a session only when `url` is present). The parameter is
 renamed from `sessionId` to `room` because "session" already means the
 serialized JSON in juicebox.js's `CONTEXT.md` and the MCP transport's
 `mcp-session-id`; three meanings on one word was the source of the conflation.
@@ -212,13 +253,19 @@ serialized JSON in juicebox.js's `CONTEXT.md` and the MCP transport's
 
 One shell‑owned widget (juicebox-web vocabulary: a *widget*), roughly 50 lines:
 
-- on load, read `?room=`; if present, `attachRemote({hic, container, url: import.meta.env.VITE_WS_URL, room, …})`;
+- in `js/app.js` `init()` after `hic.init` (and `js/embed.js`), read `?room=`;
+  if present, `attachRemote({hic, container, url: import.meta.env.VITE_WS_URL, room, …})`.
+  juicebox-web itself parses no URL parameters today; `?session=` is handled
+  inside juicebox.js;
+- a "Start room" action that calls `attachRemote` without `room` (§5.1);
 - a connection indicator in the navbar; a "Join link" QR entry in the share
   area, clearly separate from the snapshot share modal (§7);
 - `onToolCall` → the existing alert/toast area.
 
-No other change to the shell. The `embed.html` distribution can attach the
-same way, which is the "any web page" proof.
+`VITE_WS_URL` is added to `.env.example` and set in the Cloudflare Pages
+project (production and preview). Work happens on the `weiszd/juicebox-web`
+fork and lands by PR. No other change to the shell. The `embed.html`
+distribution attaches the same way, which is the "any web page" proof.
 
 ## 9. Repository plan for `juicebox-mcp`
 
@@ -255,22 +302,24 @@ Same result for the tree; breaks any existing clone's `main`. Not recommended.
 
 ## 10. Order of work, with verification
 
-1. **juicebox.js §4** — PRs with manifest + tests. Verify: `test/testPublicApi.js` green; juicebox-web unchanged and green against the new version.
-2. **`packages/remote`** — `protocol.js`, `applyCommand`, `observe`, `attachRemote`. Verify: jsdom tests with a fake `hic` namespace covering every row of §5.2/§5.3.
-3. **`packages/server`** — move Worker code, single `tools.js`, catalog import (D4), `Origin` check. Verify: `wrangler dev` + MCP Inspector, all 27 tools; ChatGPT HMAC path unchanged.
-4. **juicebox-web widget §8** — `?room=`, indicator, join‑link QR. Verify: two tabs on one room stay in sync for every §5.3 event; a third tab opened late receives the state; a snapshot link still restores with the server down.
-5. **Client onboarding** — Claude Desktop custom connector, `mcp-remote` local recipe, `connector-mcpb`. Verify: each drives a map load end to end.
-6. **Repo restart §9**, README, retire prototype docs to the `prototype` branch.
+0. **Repo restart §9** first (PR #1 is merged), so `packages/` is built on the clean tree. The deployed prototype Worker keeps running.
+1. **juicebox.js §4** — tickets in `.scratch/v2/` here; code on the `weiszd/juicebox.js` fork, landed by one PR to aidenlab that also carries a mirror ADR for "generic hooks only". Verify: `test/testPublicApi.js` green; juicebox-web unchanged and green against 4.6.0. Point the stale local checkout (4.1.1) at the fork and pull first.
+2. **`packages/remote`** — `protocol.js`, `applyCommand`, `observe`, `attachRemote`. Verify: jsdom tests with a fake `hic` namespace covering every row of §5.2/§5.3, plus ack and room minting.
+3. **`packages/server`** — move Worker code, single `tools.js`, catalog copy, `Origin` check, ack, short room ids, expiry alarm. Verify: vitest‑pool‑workers suite green; `wrangler dev` + MCP Inspector, all 27 tools; ChatGPT HMAC path unchanged.
+4. **juicebox-web widget §8** — `?room=`, start room, indicator, join‑link QR; PR from the fork. Verify: two tabs on one room stay in sync for every §5.3 event; a third tab opened late receives the state; a snapshot link still restores with the server down.
+5. **Client onboarding** — Claude Desktop custom connector, `mcp-remote` local recipe. Verify: each drives a map load end to end.
+6. README, retire prototype docs to the `prototype` branch.
 
-## 11. Open questions
+## 11. Open questions — resolved 2026‑09‑28
 
-- **Q1** juicebox.js version that carries §4 — bump minor (4.5.0) and pin
-  `@aidenlab/juicebox-remote`'s peer range to it?
-- **Q2** D4 makes the server import a file from the juicebox-web repo. Options:
-  publish the catalog configs as a tiny package, or copy the three files into
-  `packages/server` with a "source: juicebox-web" header. Lean: copy; they change rarely.
-- **Q3** URL shortener: keep TinyURL (`t.3dg.io`) or call juicebox-web's
-  `jb-shortlink` worker? One shortener is enough; whichever owns the domain.
-- **Q4** Should the Durable Object persist the last auto‑saved session in DO
-  storage (survives eviction) or in memory only (prototype behaviour)?
-- **Q5** Room id in the join link: raw UUID, or short id so the QR stays small?
+- **Q1** juicebox.js 4.5.1 was released 2026‑09‑27; §4 ships as **4.6.0**, peer range `>=4.6.0 <5`.
+- **Q2** **Copy** the ENCODE and 4DN modules into `packages/server` with a source header (§6). AidenLab list later.
+- **Q3** **TinyURL** from the Worker, `t.3dg.io`, key as a secret (§6). `jb-shortlink` is a redirector, not a shortener.
+- **Q4** DO storage (already the case) **plus a 24 h idle expiry alarm** (ADR‑0006).
+- **Q5** **Short id**, 10‑char Crockford base32 (§5.4).
+
+Decided in the same review: command acks (§5.4); page‑started rooms (§5.1);
+snapshot‑vs‑room precedence (§7); callback naming (§4); `@aidenlab/juicebox-remote`
+stays the name; server tests with vitest‑pool‑workers (§6); `connector-mcpb`
+deferred (§6); all juicebox.js and juicebox-web work via the weiszd forks + PR, no
+issues opened on aidenlab repos (§8, §10).

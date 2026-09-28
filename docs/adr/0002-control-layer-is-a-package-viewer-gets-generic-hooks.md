@@ -1,0 +1,3 @@
+# The control layer is a DOM-free package; juicebox.js gains only generic hooks
+
+AI control must work on any page that embeds juicebox.js, not just juicebox-web, and the viewer must stay a component. So the WebSocket client, command application and change observation live in `@aidenlab/juicebox-remote` (no DOM, no shell assumptions, node-testable), and juicebox.js gains only subscribable coordinator callbacks and one event, declared in its public-API manifest, with no "MCP", "room" or "WebSocket" vocabulary. Rejected: re-forking juicebox.js (impossible against 4.x's enforced public API) and putting the control layer inside juicebox-web (not reusable).
