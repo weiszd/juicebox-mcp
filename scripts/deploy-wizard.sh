@@ -303,10 +303,17 @@ pause
 
 # ──────────────────────────────────────────────────────────────────────────
 stage "Deploy the Worker"
-say "Runs 'wrangler deploy' in packages/server. The custom domain jbmcp.3dg.io is attached"
-say "by wrangler, which creates its DNS record."
-note "If it fails because jbmcp.3dg.io already has a DNS record (the prototype's), delete that"
-note "record under dash.cloudflare.com → 3dg.io → DNS → Records, then re-run this wizard."
+if [[ -n "$DEPLOY_ENV" ]]; then
+  say "Runs 'wrangler deploy --env $DEPLOY_ENV' in packages/server: Worker $WORKER_NAME on its"
+  say "*.workers.dev address. No custom domain is touched."
+  warn "If wrangler asks to move jbmcp.3dg.io to this Worker, answer N: that would take the"
+  warn "domain off the prototype. (wrangler.toml's [env.$DEPLOY_ENV] sets routes = [] to prevent it.)"
+else
+  say "Runs 'wrangler deploy' in packages/server. The custom domain jbmcp.3dg.io is attached"
+  say "by wrangler, which creates its DNS record."
+  note "If it fails because jbmcp.3dg.io already has a DNS record (the prototype's), delete that"
+  note "record under dash.cloudflare.com → 3dg.io → DNS → Records, then re-run this wizard."
+fi
 if confirm "Deploy now?"; then
   wrangler deploy
   if [[ -n "$DEPLOY_ENV" ]]; then

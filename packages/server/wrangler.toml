@@ -71,12 +71,15 @@ ALLOWED_ORIGINS = [
 # ── Side-by-side trial deployment ────────────────────────────────────────────
 # `wrangler deploy --env v2` publishes this same code as a second Worker,
 # "juicebox-mcp-v2", on its *.workers.dev address, leaving the prototype Worker
-# "juicebox-mcp" and jbmcp.3dg.io untouched. Named environments inherit nothing
-# below `[vars]` and `durable_objects`, so both are repeated here; migrations
-# are top-level and apply to every environment. Secrets are per environment:
-# `wrangler secret put <NAME> --env v2`. Cutover later = move `routes` here.
+# "juicebox-mcp" and jbmcp.3dg.io untouched. Named environments inherit the
+# top-level `routes` (so `routes = []` here is what keeps the domain on the
+# prototype) but not `vars` or `durable_objects`, so those are repeated;
+# migrations are top-level and apply to every environment. Secrets are per
+# environment: `wrangler secret put <NAME> --env v2`. Cutover later = move the
+# custom domain route into this block.
 [env.v2]
 name = "juicebox-mcp-v2"
+routes = []
 workers_dev = true
 preview_urls = false
 
