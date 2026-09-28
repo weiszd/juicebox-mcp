@@ -7,10 +7,6 @@ const ACK_TIMEOUT_MS = 10_000;
 /** A room's storage is deleted this long after its last message (ADR-0006). */
 const ROOM_TTL_MS = 24 * 60 * 60 * 1000;
 
-// Page → room messages kept from the prototype for the saved session and catch-up (design §7).
-const SAVE_SESSION = 'saveSession'; // {compressedSession}
-const REQUEST_SESSION_FROM_PEER = 'requestSessionFromPeer'; // answered with peerSessionData
-
 /**
  * Durable Object for managing WebSocket connections between the MCP server and browser clients.
  * One instance per room (keyed by room id).
@@ -158,13 +154,13 @@ export class WebSocketRoom {
       }
 
       // Saved session: the page's latest compressed session, for a late joiner with no live peer
-      if (data.type === SAVE_SESSION && data.compressedSession) {
+      if (data.type === MessageType.SAVE_SESSION && data.compressedSession) {
         await this.state.storage.put('session', data.compressedSession);
         return;
       }
 
       // Late joiner: send it the room's current state
-      if (data.type === REQUEST_SESSION_FROM_PEER) {
+      if (data.type === MessageType.REQUEST_SESSION_FROM_PEER) {
         await this.sendCatchUp(ws);
         return;
       }
