@@ -104,8 +104,15 @@ export function observe(hic, send) {
     [SyncEventType.DISPLAY_MODE_CHANGE]: (browser, { displayMode }) => browser.setDisplayMode(displayMode),
     [SyncEventType.MAP_LOAD]: (browser, { url, name }) => browser.loadHicFile({ url, name }),
     [SyncEventType.CONTROL_MAP_LOAD]: (browser, { url, name }) => browser.loadHicControlFile({ url, name }),
-    // Resolves once every track has loaded, so their TrackXYPairLoad events fall inside the guard.
-    [SyncEventType.TRACK_LOAD]: (browser, { configs }) => browser.loadTracks(configs),
+    [SyncEventType.TRACK_LOAD]: (browser, { configs }) => {
+      // A url a track already carries, loaded or pending, is not loaded again: a loadTrack command
+      // or a restored session reaches every page, and each page's tracks load after the guard
+      // lifts (ADR-0017), so every page sends trackLoad for them.
+      const held = new Set(browser.trackPairs.map(({ track, config = track.config }) => config?.url));
+      const toLoad = configs.filter(({ url }) => !held.has(url));
+      // Resolves once every track has loaded, so their TrackXYPairLoad events fall inside the guard.
+      if (toLoad.length) return browser.loadTracks(toLoad);
+    },
     [SyncEventType.TRACK_REMOVE]: (browser, { track }) =>
       browser.layoutController.removeTrackXYPair(trackPairNamed(browser, track)),
     [SyncEventType.TRACK_COLOR_CHANGE]: (browser, { track, colorString }) =>

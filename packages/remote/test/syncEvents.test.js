@@ -493,6 +493,46 @@ describe('sync events: commands', () => {
   });
 });
 
+// A loadTrack command or a restored session reaches every page, and each page's
+// tracks finish loading after the guard lifts, so each page sends trackLoad for them.
+describe('sync events: a track this page already has', () => {
+  const ctcf = { url: 'https://tracks.example/ctcf.bw', name: 'CTCF' };
+  const k27 = { url: 'https://tracks.example/k27.bw', name: 'H3K27ac' };
+
+  it('a trackLoad for the url of a loaded track does not load it again', async () => {
+    const hic = fakeHic();
+    hic.addTrack(ctcf);
+    const { socket } = await joined(hic);
+    socket.receive({ type: 'syncEvent', syncType: 'trackLoad', configs: [ctcf] });
+    await settle();
+    expect(hic.current.loadTracks).not.toHaveBeenCalled();
+  });
+
+  it('nor of a pending one: the peer’s load of a loadTrack command finished first', async () => {
+    const hic = fakeHic();
+    // As juicebox.js's: the pending row, carrying its config, is there as soon as the load starts.
+    hic.current.loadTracks.mockImplementationOnce((configs) => {
+      hic.current.trackPairs.unshift(...configs.map((config) => ({ config, track: { name: config.name } })));
+      return new Promise(() => {});
+    });
+    const { socket } = await joined(hic);
+    socket.receive({ type: 'loadTrack', requestId: 'c1', url: ctcf.url, name: 'CTCF' });
+    socket.receive({ type: 'syncEvent', syncType: 'trackLoad', configs: [{ ...ctcf, format: 'bigwig' }] });
+    await settle();
+    expect(acksOf(socket)).toEqual([{ type: 'ack', requestId: 'c1', ok: true }]);
+    expect(hic.current.loadTracks).toHaveBeenCalledTimes(1);
+  });
+
+  it('only the configs whose url no track has are loaded', async () => {
+    const hic = fakeHic();
+    hic.addTrack(ctcf);
+    const { socket } = await joined(hic);
+    socket.receive({ type: 'syncEvent', syncType: 'trackLoad', configs: [ctcf, k27] });
+    await settle();
+    expect(hic.current.loadTracks.mock.calls).toEqual([[[k27]]]);
+  });
+});
+
 describe('sync events: locus rate limiting', () => {
   const locusEvents = (socket) => syncEventsOf(socket).filter((m) => m.syncType === 'locusChange');
 
