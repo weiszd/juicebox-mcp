@@ -35,7 +35,7 @@ const colorSchema = z.string().regex(/^#[0-9A-Fa-f]{6}$/, 'Must be a hex color c
  *
  * @param {McpServer} mcpServer
  * @param {object} deps
- * @param {function} deps.sendCommand - (command) => Promise<{status, ok?, result?, error?}>, sends to every page in the room
+ * @param {function} deps.sendCommand - (tool, command) => Promise<{status, ok?, result?, error?}>, names `tool` then sends `command` to every page in the room
  * @param {function} deps.getRoom - () => Promise<string|null>, the room bound to this MCP session
  * @param {function} deps.bindRoom - (room) => Promise<void>, rebinds this MCP session to a room
  * @param {function} deps.sendRequest - (command) => Promise<{status, ok?, result?, error?}>, asks the first live page only
@@ -63,10 +63,11 @@ export function registerTools(mcpServer, deps) {
   /**
    * Send a command to the bound room and report what the first page's ack said:
    * `text` on ok, the page's error on not ok, "sent, unconfirmed" on no ack in 10 s,
-   * and an error when no page is connected (design §5.4).
+   * and an error when no page is connected (design §5.4). The room names `tool` to
+   * every page first (`toolCall`, §5.2).
    */
-  async function runCommand(command, text) {
-    const outcome = await sendCommand(command);
+  async function runCommand(tool, command, text) {
+    const outcome = await sendCommand(tool, command);
     if (outcome.status === 'no-page') {
       return { content: [{ type: 'text', text: `Error: ${NO_PAGE}` }], isError: true };
     }
@@ -138,7 +139,7 @@ export function registerTools(mcpServer, deps) {
       }
     },
     async ({ url, name, normalization, locus }) => {
-      return runCommand({ type: 'loadMap', url, name, normalization, locus }, `Loading map from ${url}${name ? ` (${name})` : ''}`);
+      return runCommand('load_map', { type: 'loadMap', url, name, normalization, locus }, `Loading map from ${url}${name ? ` (${name})` : ''}`);
     }
   );
 
@@ -155,7 +156,7 @@ export function registerTools(mcpServer, deps) {
       }
     },
     async ({ url, name, normalization }) => {
-      return runCommand({ type: 'loadControlMap', url, name, normalization }, `Loading control map from ${url}${name ? ` (${name})` : ''}`);
+      return runCommand('load_control_map', { type: 'loadControlMap', url, name, normalization }, `Loading control map from ${url}${name ? ` (${name})` : ''}`);
     }
   );
 
@@ -208,7 +209,7 @@ export function registerTools(mcpServer, deps) {
         }
 
         const browserCount = parsedSession.browsers ? parsedSession.browsers.length : 1;
-        return await runCommand({ type: 'loadSession', sessionData: parsedSession }, `Session loaded successfully. Restored ${browserCount} browser(s).`);
+        return await runCommand('load_session', { type: 'loadSession', sessionData: parsedSession }, `Session loaded successfully. Restored ${browserCount} browser(s).`);
       } catch (error) {
         log.logError(`Error loading session: ${error.message}`);
         return { content: [{ type: 'text', text: `Error loading session: ${error.message}` }], isError: true };
@@ -228,7 +229,7 @@ export function registerTools(mcpServer, deps) {
       }
     },
     async ({ centerX, centerY }) => {
-      return runCommand({ type: 'zoomIn', centerX, centerY }, 'Zooming in');
+      return runCommand('zoom_in', { type: 'zoomIn', centerX, centerY }, 'Zooming in');
     }
   );
 
@@ -244,7 +245,7 @@ export function registerTools(mcpServer, deps) {
       }
     },
     async ({ centerX, centerY }) => {
-      return runCommand({ type: 'zoomOut', centerX, centerY }, 'Zooming out');
+      return runCommand('zoom_out', { type: 'zoomOut', centerX, centerY }, 'Zooming out');
     }
   );
 
@@ -264,7 +265,7 @@ export function registerTools(mcpServer, deps) {
       if (!rgb) {
         return { content: [{ type: 'text', text: `Invalid color: ${color}. Please use a hex code (e.g., "#ff0000")` }], isError: true };
       }
-      return runCommand({ type: 'setForegroundColor', color: rgb, threshold }, `Map foreground color set to ${color}${threshold ? ` with threshold ${threshold}` : ''}`);
+      return runCommand('set_map_foreground_color', { type: 'setForegroundColor', color: rgb, threshold }, `Map foreground color set to ${color}${threshold ? ` with threshold ${threshold}` : ''}`);
     }
   );
 
@@ -281,7 +282,7 @@ export function registerTools(mcpServer, deps) {
       if (!rgb) {
         return { content: [{ type: 'text', text: `Invalid color: ${color}. Please use a hex code (e.g., "#000000")` }], isError: true };
       }
-      return runCommand({ type: 'setBackgroundColor', color: rgb }, `Map background color set to ${color}`);
+      return runCommand('set_map_background_color', { type: 'setBackgroundColor', color: rgb }, `Map background color set to ${color}`);
     }
   );
 
@@ -301,7 +302,7 @@ export function registerTools(mcpServer, deps) {
         return { content: [{ type: 'text', text: 'A positive numeric value is required when action is "set"' }], isError: true };
       }
       const desc = action === 'set' ? `set to ${value}` : action === 'increase' ? 'increased (doubled)' : 'decreased (halved)';
-      return runCommand({ type: 'setColorScale', action, value }, `Color scale threshold ${desc}`);
+      return runCommand('set_color_scale', { type: 'setColorScale', action, value }, `Color scale threshold ${desc}`);
     }
   );
 
@@ -338,7 +339,7 @@ export function registerTools(mcpServer, deps) {
       if (resolvedColor) command.color = resolvedColor;
       if (preset?.type) command.trackType = preset.type;
       if (preset?.format) command.format = preset.format;
-      return runCommand(command, `Loading track${resolvedName ? ` "${resolvedName}"` : ''} from ${resolvedUrl}`);
+      return runCommand('load_track', command, `Loading track${resolvedName ? ` "${resolvedName}"` : ''} from ${resolvedUrl}`);
     }
   );
 
@@ -363,7 +364,7 @@ export function registerTools(mcpServer, deps) {
         INTER_SCALE: 'INTER_SCALE',
         GW_SCALE: 'GW_SCALE'
       };
-      return runCommand({ type: 'setNormalization', normalization }, `Normalization set to ${normNames[normalization] || normalization}`);
+      return runCommand('select_normalization', { type: 'setNormalization', normalization }, `Normalization set to ${normNames[normalization] || normalization}`);
     }
   );
 
@@ -396,7 +397,7 @@ export function registerTools(mcpServer, deps) {
       }
     },
     async ({ track }) => {
-      return runCommand({ type: 'removeTrack', track }, `Removing track: ${track}`);
+      return runCommand('remove_track', { type: 'removeTrack', track }, `Removing track: ${track}`);
     }
   );
 
@@ -417,7 +418,7 @@ export function registerTools(mcpServer, deps) {
         const rgb = hexToRgb(color);
         if (rgb) command.color = rgb;
       }
-      return runCommand(command, color ? `Setting track "${track}" color to ${color}` : `Resetting track "${track}" color to default`);
+      return runCommand('set_track_color', command, color ? `Setting track "${track}" color to ${color}` : `Resetting track "${track}" color to default`);
     }
   );
 
@@ -433,7 +434,7 @@ export function registerTools(mcpServer, deps) {
       }
     },
     async ({ track, name }) => {
-      return runCommand({ type: 'setTrackName', track, name }, `Renaming track "${track}" to "${name}"`);
+      return runCommand('set_track_name', { type: 'setTrackName', track, name }, `Renaming track "${track}" to "${name}"`);
     }
   );
 
@@ -450,7 +451,7 @@ export function registerTools(mcpServer, deps) {
       }
     },
     async ({ track, min, max }) => {
-      return runCommand({ type: 'setTrackDataRange', track, min, max }, `Setting track "${track}" data range to [${min}, ${max}]`);
+      return runCommand('set_track_data_range', { type: 'setTrackDataRange', track, min, max }, `Setting track "${track}" data range to [${min}, ${max}]`);
     }
   );
 
@@ -466,7 +467,7 @@ export function registerTools(mcpServer, deps) {
       }
     },
     async ({ track, enabled }) => {
-      return runCommand({ type: 'setTrackAutoscale', track, enabled }, `${enabled ? 'Enabling' : 'Disabling'} autoscale for track "${track}"`);
+      return runCommand('set_track_autoscale', { type: 'setTrackAutoscale', track, enabled }, `${enabled ? 'Enabling' : 'Disabling'} autoscale for track "${track}"`);
     }
   );
 
@@ -482,7 +483,7 @@ export function registerTools(mcpServer, deps) {
       }
     },
     async ({ track, enabled }) => {
-      return runCommand({ type: 'setTrackLogScale', track, enabled }, `${enabled ? 'Enabling' : 'Disabling'} log scale for track "${track}"`);
+      return runCommand('set_track_log_scale', { type: 'setTrackLogScale', track, enabled }, `${enabled ? 'Enabling' : 'Disabling'} log scale for track "${track}"`);
     }
   );
 
@@ -782,7 +783,7 @@ Just ask:
       } else {
         locusDisplay = JSON.stringify(locus);
       }
-      return runCommand({ type: 'gotoLocus', locus }, `Navigating to locus: ${locusDisplay}`);
+      return runCommand('goto_locus', { type: 'gotoLocus', locus }, `Navigating to locus: ${locusDisplay}`);
     }
   );
 

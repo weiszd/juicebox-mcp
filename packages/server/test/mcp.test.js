@@ -50,6 +50,12 @@ async function pageIn(room) {
   return page;
 }
 
+/** The page's next command, past the toolCall notice the room sends ahead of it. */
+async function nextCommand(page) {
+  expect((await page.next()).type).toBe(MessageType.TOOL_CALL);
+  return page.next();
+}
+
 /**
  * Decode a QR code PNG as the server writes it (1-bit indexed, unfiltered rows)
  * and return the text it encodes.
@@ -113,7 +119,7 @@ describe('initialize', () => {
     const page = await pageIn(room);
 
     const call = rpc('tools/call', { name: 'zoom_in', arguments: {} }, { 'x-openai-session': 'openai-c' });
-    const command = await page.next();
+    const command = await nextCommand(page);
     page.send({ type: MessageType.ACK, requestId: command.requestId, ok: true });
 
     expect(command.type).toBe(CommandType.ZOOM_IN);
@@ -141,7 +147,7 @@ describe('commands with ack', () => {
     const page = await pageIn(session);
 
     const call = callTool(session, 'goto_locus', { locus: 'chr1:1000-2000' });
-    const command = await page.next();
+    const command = await nextCommand(page);
     page.send({ type: MessageType.ACK, requestId: command.requestId, ok: true });
     const result = await call;
 
@@ -155,7 +161,7 @@ describe('commands with ack', () => {
     const page = await pageIn(session);
 
     const call = callTool(session, 'goto_locus', { locus: 'chr1:1000-2000' });
-    const command = await page.next();
+    const command = await nextCommand(page);
     page.send({ type: MessageType.ACK, requestId: command.requestId, ok: false, error: 'No map loaded' });
     const result = await call;
 
@@ -169,7 +175,7 @@ describe('commands with ack', () => {
     const b = await pageIn(session);
 
     const call = callTool(session, 'goto_locus', { locus: 'chr2' });
-    const [toA, toB] = await Promise.all([a.next(), b.next()]);
+    const [toA, toB] = await Promise.all([nextCommand(a), nextCommand(b)]);
     b.send({ type: MessageType.ACK, requestId: toB.requestId, ok: false, error: 'first' });
     const result = await call;
     a.send({ type: MessageType.ACK, requestId: toA.requestId, ok: true });
@@ -192,7 +198,7 @@ describe('commands with ack', () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
 
     const call = callTool(session, 'goto_locus', { locus: 'chr1' });
-    await page.next(); // the command is out and its ack timer is running
+    await nextCommand(page); // the command is out and its ack timer is running
     // Advance from inside the room: its timer callback must run in the room's I/O context.
     const room = env.WEBSOCKET_ROOM.get(env.WEBSOCKET_ROOM.idFromName(session));
     await runInDurableObject(room, () => vi.advanceTimersByTimeAsync(10_000));
@@ -200,6 +206,69 @@ describe('commands with ack', () => {
 
     expect(result.isError).toBeFalsy();
     expect(text(result)).toContain('sent, unconfirmed');
+  });
+});
+
+describe('toolCall notice', () => {
+  /** Every command-producing tool, with arguments it accepts, and the command it sends. */
+  const commandTools = [
+    ['load_map', { url: 'https://example.org/a.hic' }, CommandType.LOAD_MAP],
+    ['load_control_map', { url: 'https://example.org/b.hic' }, CommandType.LOAD_CONTROL_MAP],
+    ['load_session', { sessionData: JSON.stringify({ browsers: [] }) }, CommandType.LOAD_SESSION],
+    ['zoom_in', {}, CommandType.ZOOM_IN],
+    ['zoom_out', {}, CommandType.ZOOM_OUT],
+    ['set_map_foreground_color', { color: '#ff0000' }, CommandType.SET_FOREGROUND_COLOR],
+    ['set_map_background_color', { color: '#ffffff' }, CommandType.SET_BACKGROUND_COLOR],
+    ['set_color_scale', { action: 'increase' }, CommandType.SET_COLOR_SCALE],
+    ['load_track', { url: 'genes' }, CommandType.LOAD_TRACK],
+    ['select_normalization', { normalization: 'KR' }, CommandType.SET_NORMALIZATION],
+    ['remove_track', { track: 'genes' }, CommandType.REMOVE_TRACK],
+    ['set_track_color', { track: 'genes', color: '#00ff00' }, CommandType.SET_TRACK_COLOR],
+    ['set_track_name', { track: 'genes', name: 'RefSeq' }, CommandType.SET_TRACK_NAME],
+    ['set_track_data_range', { track: 'genes', min: 0, max: 10 }, CommandType.SET_TRACK_DATA_RANGE],
+    ['set_track_autoscale', { track: 'genes', enabled: true }, CommandType.SET_TRACK_AUTOSCALE],
+    ['set_track_log_scale', { track: 'genes', enabled: true }, CommandType.SET_TRACK_LOG_SCALE],
+    ['goto_locus', { locus: 'chr1' }, CommandType.GOTO_LOCUS],
+  ];
+
+  it.each(commandTools)('%s sends toolCall {name} to every page before its command', async (name, args, type) => {
+    const session = await newSession();
+    const a = await pageIn(session);
+    const b = await pageIn(session);
+
+    const call = callTool(session, name, args);
+    const [noticeA, noticeB] = [await a.next(), await b.next()];
+    const [commandA, commandB] = [await a.next(), await b.next()];
+    a.send({ type: MessageType.ACK, requestId: commandA.requestId, ok: true });
+    const result = await call;
+
+    expect(noticeA).toEqual({ type: MessageType.TOOL_CALL, name });
+    expect(noticeB).toEqual({ type: MessageType.TOOL_CALL, name });
+    expect(commandA.type).toBe(type);
+    expect(commandB).toEqual(commandA);
+    expect(result.isError).toBeFalsy();
+  });
+
+  it('read-only tools send nothing to the page', async () => {
+    const session = await newSession();
+    const page = await pageIn(session);
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('')); // the search tools' catalogs
+
+    for (const [name, args] of [
+      ['search_maps', { query: 'GM12878' }],
+      ['get_data_source_statistics', { source: '4dn' }],
+      ['get_map_details', { source: '4dn', index: 0 }],
+      ['list_data_sources', {}],
+      ['get_server_status', {}],
+      ['juicebox_help', {}],
+      ['get_juicebox_url', {}],
+      ['join_room', { room: session }],
+    ]) {
+      await callTool(session, name, args);
+    }
+    page.send({ type: MessageType.JOIN, room: session });
+
+    expect(await page.next()).toEqual({ type: MessageType.JOINED, room: session }); // barrier: nothing came before
   });
 });
 
@@ -233,7 +302,7 @@ describe('join link and join_room', () => {
 
     await callTool(session, 'join_room', { room });
     const call = callTool(session, 'zoom_out');
-    const command = await page.next();
+    const command = await nextCommand(page);
     page.send({ type: MessageType.ACK, requestId: command.requestId, ok: true });
 
     expect(command.type).toBe(CommandType.ZOOM_OUT);

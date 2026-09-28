@@ -173,13 +173,13 @@ async function handleMcpRequest(request, env) {
       return env.WEBSOCKET_ROOM.get(env.WEBSOCKET_ROOM.idFromName(room));
     }
 
-    async function postToRoom(path, command) {
+    async function postToRoom(path, body) {
       const stub = await getDoStub();
       if (!stub) return { status: 'no-page' };
       const resp = await stub.fetch(new Request(`https://do${path}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(command)
+        body: JSON.stringify(body)
       }));
       return resp.json();
     }
@@ -197,9 +197,9 @@ async function handleMcpRequest(request, env) {
       },
 
       // Resolves {status: 'acked', ok, result?, error?} | {status: 'unconfirmed'} | {status: 'no-page'}.
-      sendCommand: (command) => {
-        logInfo(`[sendCommand] type=${command.type} sessionId=${effectiveSessionId || 'NONE'}`);
-        return postToRoom('/send', command);
+      sendCommand: (tool, command) => {
+        logInfo(`[sendCommand] tool=${tool} type=${command.type} sessionId=${effectiveSessionId || 'NONE'}`);
+        return postToRoom('/send', { tool, command });
       },
 
       // Same, but asks only the first live page; adds {status: 'closed'} if it disconnects first.
