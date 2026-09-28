@@ -88,3 +88,17 @@ Both register the **same 27 tools** with the same names and schemas. **Adding, r
 `docs/development-notes/PORTING_MCP_TO_JUICEBOX_JS.md` — what this fork changed vs. upstream juicebox.js (both stages), the server↔browser protocol contract, and the plan for re-attaching the MCP layer to current juicebox.js (4.x) as a host app. Read it before touching `js/` or `Application.js` sync wiring.
 
 `docs/mcp-notes/` (tool reference, MCPB build guide, WebSocket debugging, Netlify setup), `docs/datasource-notes/` (search implementation), `docs/development-notes/` (STDIO/WebSocket architecture, color scale refactoring, locus specification, version management).
+
+## Agent skills
+
+### Issue tracker
+
+Issues live as local markdown under `.scratch/<feature>/` in this repo (no GitHub issues; the fork has them disabled). See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Default five-role vocabulary: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: `CONTEXT.md` at the repo root plus `docs/adr/`, both created lazily. See `docs/agents/domain.md`.

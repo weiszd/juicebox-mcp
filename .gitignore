@@ -25,3 +25,6 @@ dist/
 # Claude Code per-developer settings
 .claude/settings.json
 .claude/settings.local.json
+
+# Local markdown issue tracker (see docs/agents/issue-tracker.md)
+.scratch/
