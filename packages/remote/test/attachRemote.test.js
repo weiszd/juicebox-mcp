@@ -52,6 +52,7 @@ function fakeHic({ mapLoaded = true, trackPairs = [], tracks2D = [] } = {}) {
   const browser = {
     dataset: mapLoaded ? { url: 'https://maps.example/a.hic' } : undefined,
     controlDataset: undefined,
+    coordinator: { addCallback: () => () => {} }, // sync events are covered in syncEvents.test.js
     loadHicFile: vi.fn(async (config) => {
       browser.dataset = { url: config.url };
     }),
@@ -76,6 +77,7 @@ function fakeHic({ mapLoaded = true, trackPairs = [], tracks2D = [] } = {}) {
     layoutController: { removeTrackXYPair: vi.fn() },
   };
   return {
+    EventBus: { globalBus: { subscribe() {}, unsubscribe() {} } },
     getCurrentBrowser: vi.fn(() => browser),
     restoreSession: vi.fn(async () => {}),
     toJSON: vi.fn(() => ({ browsers: [{ url: 'https://maps.example/a.hic', tracks: [] }] })),
