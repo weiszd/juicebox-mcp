@@ -45,6 +45,13 @@ export async function openPage(query) {
   return {
     send: (msg) => ws.send(JSON.stringify(msg)),
     next: () => (queued.length ? Promise.resolve(queued.shift()) : new Promise((r) => waiting.push(r))),
+    /** Close the page; resolves once the room has answered the close, i.e. has seen it go. */
+    close: () => {
+      open.splice(open.indexOf(ws), 1);
+      const closed = new Promise((r) => ws.addEventListener('close', r));
+      ws.close();
+      return closed;
+    },
   };
 }
 

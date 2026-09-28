@@ -38,8 +38,7 @@ const colorSchema = z.string().regex(/^#[0-9A-Fa-f]{6}$/, 'Must be a hex color c
  * @param {function} deps.sendCommand - (command) => Promise<{status, ok?, result?, error?}>, sends to every page in the room
  * @param {function} deps.getRoom - () => Promise<string|null>, the room bound to this MCP session
  * @param {function} deps.bindRoom - (room) => Promise<void>, rebinds this MCP session to a room
- * @param {function} deps.requestSessionData - () => Promise<object>, gets session JSON from browser
- * @param {function} deps.requestCompressedSessionData - () => Promise<string>, gets compressed session
+ * @param {function} deps.sendRequest - (command) => Promise<{status, ok?, result?, error?}>, asks the first live page only
  * @param {function} deps.isBrowserConnected - () => Promise<boolean>
  * @param {string} deps.sessionId - current MCP session ID
  * @param {string} deps.browserUrl - configured frontend URL
@@ -49,9 +48,7 @@ const colorSchema = z.string().regex(/^#[0-9A-Fa-f]{6}$/, 'Must be a hex color c
 export function registerTools(mcpServer, deps) {
   const {
     sendCommand,
-    requestSessionData,
-    requestCompressedSessionData,
-    requestTrackList,
+    sendRequest,
     isBrowserConnected,
     getRoom,
     bindRoom,
@@ -61,6 +58,8 @@ export function registerTools(mcpServer, deps) {
     log
   } = deps;
 
+  const NO_PAGE = 'No page is connected to this room. Use get_juicebox_url to get the join link and open it in a browser.';
+
   /**
    * Send a command to the bound room and report what the first page's ack said:
    * `text` on ok, the page's error on not ok, "sent, unconfirmed" on no ack in 10 s,
@@ -69,7 +68,7 @@ export function registerTools(mcpServer, deps) {
   async function runCommand(command, text) {
     const outcome = await sendCommand(command);
     if (outcome.status === 'no-page') {
-      return { content: [{ type: 'text', text: 'Error: No page is connected to this room. Use get_juicebox_url to get the join link and open it in a browser.' }], isError: true };
+      return { content: [{ type: 'text', text: `Error: ${NO_PAGE}` }], isError: true };
     }
     if (outcome.status === 'unconfirmed') {
       return { content: [{ type: 'text', text: `${text} (sent, unconfirmed: no page acknowledged within 10 s)` }] };
@@ -78,6 +77,20 @@ export function registerTools(mcpServer, deps) {
       return { content: [{ type: 'text', text: `Error: ${outcome.error || `the page could not apply ${command.type}`}` }], isError: true };
     }
     return { content: [{ type: 'text', text }] };
+  }
+
+  /**
+   * Ask the first live page in the bound room for data (design §6) and resolve
+   * {result} from its ack, or {error} with the tool result to return instead.
+   */
+  async function runRequest(type) {
+    const outcome = await sendRequest({ type });
+    const fail = (text) => ({ error: { content: [{ type: 'text', text: `Error: ${text}` }], isError: true } });
+    if (outcome.status === 'no-page') return fail(NO_PAGE);
+    if (outcome.status === 'unconfirmed') return fail('the page did not answer within 10 s.');
+    if (outcome.status === 'closed') return fail('the page disconnected before answering.');
+    if (!outcome.ok) return fail(outcome.error || `the page could not answer ${type}`);
+    return { result: outcome.result };
   }
 
   // Register MCP resources for data source configurations
@@ -363,15 +376,12 @@ export function registerTools(mcpServer, deps) {
       inputSchema: {}
     },
     async () => {
-      try {
-        const tracks = await requestTrackList();
-        if (!tracks || tracks.length === 0) {
-          return { content: [{ type: 'text', text: 'No tracks loaded.' }] };
-        }
-        return { content: [{ type: 'text', text: JSON.stringify(tracks, null, 2) }] };
-      } catch (error) {
-        return { content: [{ type: 'text', text: `Error: ${error.message}` }], isError: true };
+      const { result: tracks, error } = await runRequest('getTrackList');
+      if (error) return error;
+      if (!tracks || tracks.length === 0) {
+        return { content: [{ type: 'text', text: 'No tracks loaded.' }] };
       }
+      return { content: [{ type: 'text', text: JSON.stringify(tracks, null, 2) }] };
     }
   );
 
@@ -489,35 +499,27 @@ export function registerTools(mcpServer, deps) {
         return { content: [{ type: 'text', text: 'Error: No active session found.' }], isError: true };
       }
 
-      const connected = await isBrowserConnected();
-      if (!connected) {
-        return { content: [{ type: 'text', text: 'Error: No active browser connection found. Please ensure the Juicebox browser is open and connected.' }], isError: true };
-      }
+      log.logInfo('Requesting compressed session data from browser...');
+      const { result: compressedSessionString, error } = await runRequest('getCompressedSession');
+      if (error) return error;
+      // The snapshot link (design §7): compressedSession() is `session=blob:…`.
+      const baseUrl = browserUrl.split('?')[0].split('#')[0];
+      const shareableUrl = `${baseUrl}?${compressedSessionString}`;
 
+      let shortenedUrl;
       try {
-        log.logInfo('Requesting compressed session data from browser...');
-        const compressedSessionString = await requestCompressedSessionData();
-        const baseUrl = browserUrl.split('?')[0].split('#')[0];
-        const shareableUrl = `${baseUrl}?${compressedSessionString}`;
-
-        let shortenedUrl;
-        try {
-          shortenedUrl = await shortenURL(shareableUrl);
-        } catch (error) {
-          log.logWarn('Failed to shorten URL:', error.message);
-          shortenedUrl = shareableUrl;
-        }
-
-        return {
-          content: [{
-            type: 'text',
-            text: `Shareable URL for this session:\n\n${shortenedUrl}\n\nCopy and paste this URL to share the current Juicebox session.`
-          }]
-        };
+        shortenedUrl = await shortenURL(shareableUrl);
       } catch (error) {
-        log.logError('Error creating shareable URL:', error);
-        return { content: [{ type: 'text', text: `Error creating shareable URL: ${error.message}` }], isError: true };
+        log.logWarn('Failed to shorten URL:', error.message);
+        shortenedUrl = shareableUrl;
       }
+
+      return {
+        content: [{
+          type: 'text',
+          text: `Shareable URL for this session:\n\n${shortenedUrl}\n\nCopy and paste this URL to share the current Juicebox session.`
+        }]
+      };
     }
   );
 
@@ -951,30 +953,21 @@ Just ask:
       }
     },
     async ({ filePath }) => {
-      try {
-        if (!sessionId) {
-          return { content: [{ type: 'text', text: 'Error: No active session found. Please ensure the browser is connected.' }], isError: true };
-        }
-
-        const connected = await isBrowserConnected();
-        if (!connected) {
-          return { content: [{ type: 'text', text: 'Error: No active browser connection found. Please ensure the Juicebox browser is open and connected.' }], isError: true };
-        }
-
-        log.logInfo('Requesting session data from browser...');
-        const sessionDataResult = await requestSessionData();
-        const jsonString = JSON.stringify(sessionDataResult, null, 2);
-
-        return {
-          content: [{
-            type: 'text',
-            text: `Session data retrieved successfully.\n\nYou can copy the JSON below to save it locally:\n\n\`\`\`json\n${jsonString}\n\`\`\``
-          }]
-        };
-      } catch (error) {
-        log.logError('Error saving session:', error);
-        return { content: [{ type: 'text', text: `Error saving session: ${error.message}` }], isError: true };
+      if (!sessionId) {
+        return { content: [{ type: 'text', text: 'Error: No active session found. Please ensure the browser is connected.' }], isError: true };
       }
+
+      log.logInfo('Requesting session data from browser...');
+      const { result: sessionDataResult, error } = await runRequest('getSession');
+      if (error) return error;
+      const jsonString = JSON.stringify(sessionDataResult, null, 2);
+
+      return {
+        content: [{
+          type: 'text',
+          text: `Session data retrieved successfully.\n\nYou can copy the JSON below to save it locally:\n\n\`\`\`json\n${jsonString}\n\`\`\``
+        }]
+      };
     }
   );
 }

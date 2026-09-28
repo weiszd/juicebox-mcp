@@ -6,16 +6,33 @@
  * room answers a socket in order, so anything sent to that page before the
  * barrier arrives before its `joined`.
  */
-import { env } from 'cloudflare:test';
-import { describe, it, expect, afterEach } from 'vitest';
-import { MessageType, SyncEventType } from '@aidenlab/juicebox-remote/protocol';
+import { env, runInDurableObject, runDurableObjectAlarm, evictDurableObject } from 'cloudflare:test';
+import { describe, it, expect, afterEach, vi } from 'vitest';
+import { MessageType, CommandType, SyncEventType, ErrorCode } from '@aidenlab/juicebox-remote/protocol';
 import { ORIGIN, upgrade, openPage, join, closePages, track } from './pages.js';
 
 const ROOM_ID = /^[0-9A-HJKMNP-TV-Z]{10}$/; // Crockford base32: no I, L, O, U
+const HOUR = 60 * 60 * 1000;
 
 const locusChange = { type: MessageType.SYNC_EVENT, syncType: SyncEventType.LOCUS_CHANGE, locus: 'chr1:1-1000' };
 
-afterEach(closePages);
+// Prototype message names for the saved session and catch-up.
+const saveSession = (compressedSession) => ({ type: 'saveSession', compressedSession });
+const requestSessionFromPeer = { type: 'requestSessionFromPeer' };
+
+afterEach(() => {
+  vi.useRealTimers();
+  closePages();
+});
+
+const roomStub = (room) => env.WEBSOCKET_ROOM.get(env.WEBSOCKET_ROOM.idFromName(room));
+
+/** A page in a fresh minted room, or in `room`; joined so the room holds its socket. */
+async function pageIn(room) {
+  const page = await openPage(room ? `?room=${room}` : '');
+  const joined = await join(page, room);
+  return { page, room: joined.room };
+}
 
 describe('join', () => {
   it('join with a room id answers joined with that room', async () => {
@@ -80,5 +97,90 @@ describe('Origin allow-list', () => {
 
   it('an upgrade with no Origin header is refused with 403', async () => {
     expect((await upgrade('?room=7ZQH4M2K9X', null)).status).toBe(403);
+  });
+});
+
+describe('saved session and late-joiner catch-up', () => {
+  it('a saved session outlives its page and reaches a late joiner when no peer is live', async () => {
+    const { page: a, room } = await pageIn();
+    a.send(saveSession('session=blob:saved'));
+    await a.close();
+    await evictDurableObject(roomStub(room)); // only storage survives
+
+    const { page: b } = await pageIn(room);
+    b.send(requestSessionFromPeer);
+
+    expect(await b.next()).toEqual({ type: MessageType.PEER_SESSION_DATA, compressedSession: 'session=blob:saved' });
+  });
+
+  it('with a peer live, the late joiner gets the peer\'s live session, not the saved one', async () => {
+    const { page: a, room } = await pageIn();
+    a.send(saveSession('session=blob:stale'));
+    const { page: b } = await pageIn(room);
+
+    b.send(requestSessionFromPeer);
+    const ask = await a.next();
+    a.send({ type: MessageType.ACK, requestId: ask.requestId, ok: true, result: { browsers: ['live'] } });
+
+    expect(ask).toEqual({ type: CommandType.GET_SESSION, requestId: expect.any(String) });
+    expect(await b.next()).toEqual({ type: MessageType.PEER_SESSION_DATA, session: { browsers: ['live'] } });
+  });
+
+  it('a peer that cannot answer falls back to the saved session', async () => {
+    const { page: a, room } = await pageIn();
+    a.send(saveSession('session=blob:saved'));
+    const { page: b } = await pageIn(room);
+
+    b.send(requestSessionFromPeer);
+    const ask = await a.next();
+    a.send({ type: MessageType.ACK, requestId: ask.requestId, ok: false, error: 'No map loaded' });
+
+    expect(await b.next()).toEqual({ type: MessageType.PEER_SESSION_DATA, compressedSession: 'session=blob:saved' });
+  });
+
+  it('an empty room with nothing saved answers with an error', async () => {
+    const { page } = await pageIn();
+    page.send(requestSessionFromPeer);
+
+    expect(await page.next()).toEqual({ type: MessageType.PEER_SESSION_DATA, error: 'No session available' });
+  });
+});
+
+describe('expiry (ADR-0006)', () => {
+  const alarmOf = (room) => runInDurableObject(roomStub(room), (_, state) => state.storage.getAlarm());
+
+  it('the alarm is due 24 h after the last message; a message at +23 h pushes it out', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    const t0 = Date.now();
+    const { page, room } = await pageIn(); // join is the first message
+
+    expect(await alarmOf(room)).toBe(t0 + 24 * HOUR);
+
+    vi.setSystemTime(t0 + 23 * HOUR);
+    page.send(locusChange);
+    await join(page, room); // barrier: the sync event was handled
+
+    expect(await alarmOf(room)).toBe(t0 + 47 * HOUR);
+  });
+
+  it('the alarm deletes the room\'s storage; a join afterwards with no page left answers room-expired', async () => {
+    const { page: a, room } = await pageIn();
+    a.send(saveSession('session=blob:saved'));
+    await a.close();
+
+    expect(await runDurableObjectAlarm(roomStub(room))).toBe(true);
+    expect(await runInDurableObject(roomStub(room), (_, state) => state.storage.get('session'))).toBeUndefined();
+
+    const b = await openPage(`?room=${room}`);
+    expect(await join(b, room)).toEqual({ type: MessageType.ERROR, code: ErrorCode.ROOM_EXPIRED });
+  });
+
+  it('a page still connected when the alarm fires keeps the room joinable', async () => {
+    const { room } = await pageIn();
+
+    expect(await runDurableObjectAlarm(roomStub(room))).toBe(true);
+
+    const b = await openPage(`?room=${room}`);
+    expect(await join(b, room)).toEqual({ type: MessageType.JOINED, room });
   });
 });
