@@ -1,264 +1,95 @@
 /**
- * WebSocket client for communicating with the MCP server
- * Handles connection to the WebSocket server and processes incoming commands
- * Automatically detects if server is not running and polls for availability
+ * Reconnecting WebSocket client. Slimmed from the prototype: the socket is
+ * created through an injected factory (the platform WebSocket by default) and
+ * the connect URL is supplied by the caller, so this file touches no DOM, no
+ * `window` and no build-time environment.
+ *
+ * Reconnect delay grows 1 s, 2 s, … up to 5 s and then stays there, which is
+ * what the prototype's "polling mode" amounted to.
  */
 export class WebSocketClient {
-  constructor(onCommand, onStatusChange = null, sessionId = null) {
+  /**
+   * @param {object} opts
+   * @param {() => string} opts.getUrl        called before every attempt (the room may have been minted since)
+   * @param {(url: string) => WebSocket} [opts.createSocket]
+   * @param {() => void} [opts.onConnecting]  before every attempt
+   * @param {() => void} [opts.onOpen]
+   * @param {(msg: object) => void} [opts.onMessage]  already-parsed JSON; unparsable frames are dropped
+   * @param {() => void} [opts.onClose]        every close that is not the result of `close()`
+   */
+  constructor({ getUrl, createSocket = (url) => new WebSocket(url), onConnecting, onOpen, onMessage, onClose }) {
+    this.getUrl = getUrl;
+    this.createSocket = createSocket;
+    this.onConnecting = onConnecting;
+    this.onOpen = onOpen;
+    this.onMessage = onMessage;
+    this.onClose = onClose;
     this.ws = null;
-    this.onCommand = onCommand;
-    this.onStatusChange = onStatusChange;
-    this.sessionId = sessionId; // Store session ID for this client
     this.reconnectAttempts = 0;
-    this.maxReconnectAttempts = 10;
-    this.reconnectDelay = 1000;
-    this.isConnecting = false;
-    this.serverAvailable = false; // Track if we've ever successfully connected
-    this.pollingMode = false; // True when server appears to be offline
-    this.pollingInterval = null;
-    this.pollingDelay = 5000; // Check every 5 seconds when server is offline
-    this.initialConnectionAttempts = 0;
-    this.maxInitialAttempts = 3; // Try 3 times quickly before assuming server is offline
-    this.initialAttemptDelay = 500; // 500ms between initial attempts
-    this._notifyStatusChange(false); // Initial status: disconnected
+    this.reconnectTimer = null;
+    this.stopped = false;
   }
 
-  _notifyStatusChange(connected) {
-    if (this.onStatusChange) {
-      this.onStatusChange(connected);
-    }
-  }
+  connect() {
+    if (this.stopped) return;
+    this.onConnecting?.();
+    const ws = this.createSocket(this.getUrl());
+    this.ws = ws;
 
-  connect(url = null) {
-    // Determine WebSocket URL:
-    // 1. Explicit URL parameter (highest priority)
-    // 2. Environment variable VITE_WS_URL (for Netlify/production)
-    // 3. Auto-detect from current hostname (if same domain)
-    // 4. Default to localhost for development
-    let wsUrl = url;
-    
-    if (!wsUrl) {
-      wsUrl = import.meta.env.VITE_WS_URL;
-    }
-    
-    if (!wsUrl) {
-      // Auto-detect: if running on HTTPS, try wss:// on same domain
-      const isSecure = window.location.protocol === 'https:';
-      const protocol = isSecure ? 'wss:' : 'ws:';
-      const hostname = window.location.hostname;
-      
-      // Only auto-detect if not localhost (production deployment)
-      if (hostname !== 'localhost' && hostname !== '127.0.0.1') {
-        // Production: WebSocket on same domain via /ws path (Cloudflare Workers)
-        wsUrl = `${protocol}//${hostname}/ws`;
-      } else {
-        // Development: default to localhost
-        //wsUrl = 'ws://localhost:3011';
-        wsUrl = `${protocol}//${hostname}/ws`;
+    ws.onopen = () => {
+      if (ws !== this.ws) return;
+      this.reconnectAttempts = 0;
+      this.onOpen?.();
+    };
+
+    ws.onmessage = (event) => {
+      if (ws !== this.ws) return;
+      let msg;
+      try {
+        msg = JSON.parse(event.data);
+      } catch {
+        return;
       }
-    }
-    if (this.isConnecting || (this.ws && this.ws.readyState === WebSocket.OPEN)) {
-      return;
-    }
+      this.onMessage?.(msg);
+    };
 
-    this.isConnecting = true;
-    
-    // If we're in polling mode, log differently
-    if (this.pollingMode) {
-      console.log(`Checking if WebSocket server is available at ${wsUrl}...`);
-    } else {
-      console.log(`Connecting to WebSocket server at ${wsUrl}...`);
-      console.log(`Session ID: ${this.sessionId || 'none'}`);
-    }
+    ws.onerror = () => {
+      // The matching close event follows; nothing to do here.
+    };
 
-    try {
-      // Append sessionId as query parameter for Cloudflare Workers DO routing
-      let connectUrl = wsUrl;
-      if (this.sessionId) {
-        const separator = wsUrl.includes('?') ? '&' : '?';
-        connectUrl = `${wsUrl}${separator}sessionId=${encodeURIComponent(this.sessionId)}`;
-      }
-      this.ws = new WebSocket(connectUrl);
-
-      this.ws.onopen = () => {
-        console.log('WebSocket connected to:', wsUrl);
-        console.log('Session ID for registration:', this.sessionId || 'none');
-        this.isConnecting = false;
-        this.reconnectAttempts = 0;
-        this.serverAvailable = true;
-        this.pollingMode = false;
-        this.initialConnectionAttempts = 0;
-        
-        // Clear any polling interval since we're connected
-        if (this.pollingInterval) {
-          clearInterval(this.pollingInterval);
-          this.pollingInterval = null;
-        }
-        
-        // Register session with server if sessionId is available
-        if (this.sessionId) {
-          console.log(`Registering session ID: ${this.sessionId}`);
-          this.ws.send(JSON.stringify({
-            type: 'registerSession',
-            sessionId: this.sessionId
-          }));
-        } else {
-          console.warn('No session ID provided. WebSocket connected but session not registered.');
-        }
-        
-        this._notifyStatusChange(true);
-      };
-
-      this.ws.onmessage = (event) => {
-        try {
-          const data = JSON.parse(event.data);
-          
-          // Handle session registration confirmation
-          if (data.type === 'sessionRegistered') {
-            console.log(`✅ Session registered successfully: ${data.sessionId}`);
-            return;
-          }
-          
-          // Handle error messages
-          if (data.type === 'error') {
-            console.error('WebSocket server error:', data.message);
-            return;
-          }
-          
-          // Handle regular commands
-          console.log('Received command:', data);
-          
-          if (this.onCommand) {
-            this.onCommand(data);
-          }
-        } catch (error) {
-          console.error('Error parsing WebSocket message:', error);
-        }
-      };
-
-      this.ws.onerror = (error) => {
-        // Don't log errors in polling mode to reduce noise
-        if (!this.pollingMode) {
-          console.error('WebSocket error:', error);
-          console.error('Failed to connect to:', wsUrl);
-        }
-        this.isConnecting = false;
-      };
-
-      this.ws.onclose = (event) => {
-        console.log(`WebSocket closed. Code: ${event.code}, Reason: ${event.reason || 'none'}, Clean: ${event.wasClean}`);
-        this.isConnecting = false;
-        this._notifyStatusChange(false);
-        
-        // If we were previously connected, attempt normal reconnection
-        if (this.serverAvailable) {
-          console.log('WebSocket disconnected (was connected), attempting to reconnect...');
-          this._attemptReconnect(wsUrl);
-        } else {
-          // Server was never connected, check if we should enter polling mode
-          this._handleInitialConnectionFailure(wsUrl, event);
-        }
-      };
-    } catch (error) {
-      console.error('Error creating WebSocket connection:', error);
-      this.isConnecting = false;
-      this._handleInitialConnectionFailure(wsUrl, null);
-    }
+    ws.onclose = () => {
+      if (ws !== this.ws) return;
+      this.ws = null;
+      this.onClose?.();
+      this._scheduleReconnect();
+    };
   }
 
-  _handleInitialConnectionFailure(url, closeEvent) {
-    this.initialConnectionAttempts++;
-    
-    // If we've tried a few times quickly and failed, assume server is not running
-    if (this.initialConnectionAttempts >= this.maxInitialAttempts) {
-      if (!this.pollingMode) {
-        console.log('WebSocket server appears to be offline. Will check periodically for availability...');
-        this.pollingMode = true;
-        this._startPolling(url);
-      }
-    } else {
-      // Try a few more times quickly before giving up
-      setTimeout(() => {
-        this.connect(url);
-      }, this.initialAttemptDelay);
-    }
-  }
-
-  _startPolling(url) {
-    // Clear any existing polling interval
-    if (this.pollingInterval) {
-      clearInterval(this.pollingInterval);
-    }
-    
-    // Poll periodically to check if server becomes available
-    this.pollingInterval = setInterval(() => {
-      if (!this.isConnecting && !this.isConnected()) {
-        this.connect(url);
-      }
-    }, this.pollingDelay);
-  }
-
-  _attemptReconnect(url) {
-    // If we're in polling mode, don't do aggressive reconnection
-    // The polling mechanism will handle it
-    if (this.pollingMode) {
-      return;
-    }
-
-    if (this.reconnectAttempts >= this.maxReconnectAttempts) {
-      console.log('Max reconnection attempts reached. Server may be offline. Entering polling mode...');
-      this.pollingMode = true;
-      this.serverAvailable = false;
-      this._startPolling(url);
-      return;
-    }
-
+  _scheduleReconnect() {
+    if (this.stopped || this.reconnectTimer) return;
     this.reconnectAttempts++;
-    const delay = this.reconnectDelay * Math.min(this.reconnectAttempts, 5);
-    
-    console.log(`Attempting to reconnect in ${delay}ms (attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts})...`);
-    
-    setTimeout(() => {
-      this.connect(url);
+    const delay = 1000 * Math.min(this.reconnectAttempts, 5);
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
+      this.connect();
     }, delay);
   }
 
-  disconnect() {
-    if (this.ws) {
-      this.ws.close();
-      this.ws = null;
-    }
-    
-    // Clear polling interval
-    if (this.pollingInterval) {
-      clearInterval(this.pollingInterval);
-      this.pollingInterval = null;
-    }
-    
-    this.reconnectAttempts = this.maxReconnectAttempts; // Prevent reconnection
-    this.pollingMode = false;
-    this.serverAvailable = false;
-    this._notifyStatusChange(false);
+  send(msg) {
+    if (!this.ws || this.ws.readyState !== 1 /* OPEN */) return false;
+    this.ws.send(JSON.stringify(msg));
+    return true;
   }
 
-  isConnected() {
-    return this.ws && this.ws.readyState === WebSocket.OPEN;
-  }
-
-  /**
-   * Send a sync event to the server for relay to other browsers in the same session.
-   * @param {string} syncType - The type of sync event (e.g., 'locusChange', 'colorScaleChange')
-   * @param {Object} payload - The sync payload data
-   */
-  sendSyncEvent(syncType, payload) {
-    if (!this.isConnected()) return;
-    try {
-      const message = { type: 'syncEvent', syncType, ...payload };
-      console.log('Sending sync event:', message);
-      this.ws.send(JSON.stringify(message));
-    } catch (error) {
-      console.error('Error sending sync event:', error);
+  /** Close for good: no reconnect, no further callbacks. */
+  close() {
+    this.stopped = true;
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
     }
+    const ws = this.ws;
+    this.ws = null;
+    ws?.close();
   }
 }
-
