@@ -1,0 +1,20 @@
+{
+  "name": "juicebox-mcp-server",
+  "version": "2.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Juicebox MCP server: Cloudflare Worker (/mcp) plus a Durable Object room per page group (/ws)",
+  "license": "MIT",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.22.0",
+    "qrcode": "^1.5.4",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "wrangler": "^4.0.0"
+  }
+}
