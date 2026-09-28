@@ -3,6 +3,11 @@ main = "src/index.js"
 compatibility_date = "2024-12-01"
 compatibility_flags = ["nodejs_compat"]
 
+# MCP (/mcp) and page WebSockets (/ws) are served on this custom domain (design §6.4).
+routes = [
+  { pattern = "jbmcp.3dg.io", custom_domain = true },
+]
+
 [observability]
 enabled = false
 head_sampling_rate = 1
@@ -46,5 +51,6 @@ ALLOWED_ORIGINS = [
   "http://127.0.0.1:5173",
 ]
 
-# Secrets (set via `wrangler secret put`):
-# TINYURL_API_KEY
+# Secrets (set via `wrangler secret put`; for `wrangler dev`, in .dev.vars):
+# TINYURL_API_KEY      - TinyURL API token for create_shareable_url; unset → links are not shortened
+# SESSION_HMAC_SECRET  - HMAC key deriving room ids from x-openai-session; unset → those requests fail

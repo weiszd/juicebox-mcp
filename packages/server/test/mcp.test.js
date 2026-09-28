@@ -2,17 +2,19 @@
  * MCP seam: JSON-RPC over POST /mcp on the Worker under test, with fake pages on
  * /ws standing in for @aidenlab/juicebox-remote. Design §5.4, §6.
  */
-import { SELF, env, runInDurableObject } from 'cloudflare:test';
+import { SELF, env, runInDurableObject, createExecutionContext } from 'cloudflare:test';
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import jsQR from 'jsqr';
 import { MessageType, CommandType } from '@aidenlab/juicebox-remote/protocol';
 import { openPage, join, closePages } from './pages.js';
 import prototypeTools from './fixtures/prototype-tools.json';
+import worker from '../src/index.js';
 
 const ROOM_ID = /^[0-9A-HJKMNP-TV-Z]{10}$/; // Crockford base32: no I, L, O, U
 
 afterEach(() => {
   vi.useRealTimers();
+  vi.restoreAllMocks();
   closePages();
 });
 
@@ -242,5 +244,143 @@ describe('join link and join_room', () => {
     const result = await callTool(await newSession(), 'join_room', { room: 'not-a-room' });
 
     expect(result.isError).toBe(true);
+  });
+});
+
+describe('request tools', () => {
+  /**
+   * Of two pages, the one that receives the next message: {asked, request, other, otherNext}.
+   * `otherNext` is the other page's pending next(), so a barrier can await it.
+   */
+  function firstToReceive(x, y) {
+    const [nx, ny] = [x.next(), y.next()];
+    return Promise.race([
+      nx.then((request) => ({ asked: x, request, other: y, otherNext: ny })),
+      ny.then((request) => ({ asked: y, request, other: x, otherNext: nx })),
+    ]);
+  }
+
+  it('list_tracks returns the page\'s result; with two pages only one is asked', async () => {
+    const session = await newSession();
+    const a = await pageIn(session);
+    const b = await pageIn(session);
+    const tracks = [{ name: 'CTCF', type: '1D' }];
+
+    const call = callTool(session, 'list_tracks');
+    const { asked, request, other, otherNext } = await firstToReceive(a, b);
+    asked.send({ type: MessageType.ACK, requestId: request.requestId, ok: true, result: tracks });
+    const result = await call;
+    other.send({ type: MessageType.JOIN, room: session });
+
+    expect(request).toEqual({ type: CommandType.GET_TRACK_LIST, requestId: expect.any(String) });
+    expect(text(result)).toBe(JSON.stringify(tracks, null, 2));
+    expect(await otherNext).toEqual({ type: MessageType.JOINED, room: session }); // barrier: the other got nothing
+  });
+
+  it('save_session returns the page\'s session JSON as text', async () => {
+    const session = await newSession();
+    const page = await pageIn(session);
+    const saved = { browsers: [{ url: 'https://example.org/a.hic' }] };
+
+    const call = callTool(session, 'save_session');
+    const request = await page.next();
+    page.send({ type: MessageType.ACK, requestId: request.requestId, ok: true, result: saved });
+    const result = await call;
+
+    expect(request.type).toBe(CommandType.GET_SESSION);
+    expect(result.isError).toBeFalsy();
+    expect(text(result)).toContain(JSON.stringify(saved, null, 2));
+  });
+
+  it('a request the page fails answers with the page error text', async () => {
+    const session = await newSession();
+    const page = await pageIn(session);
+
+    const call = callTool(session, 'save_session');
+    const request = await page.next();
+    page.send({ type: MessageType.ACK, requestId: request.requestId, ok: false, error: 'No map loaded' });
+    const result = await call;
+
+    expect(result.isError).toBe(true);
+    expect(text(result)).toContain('No map loaded');
+  });
+
+  it('no page in the room answers with an error', async () => {
+    const result = await callTool(await newSession(), 'list_tracks');
+
+    expect(result.isError).toBe(true);
+    expect(text(result)).toMatch(/no page is connected/i);
+  });
+
+  it('closing page A while page B\'s request is pending leaves B\'s request alive', async () => {
+    const session = await newSession();
+    const x = await pageIn(session);
+    const y = await pageIn(session);
+
+    const call = callTool(session, 'list_tracks');
+    const { asked: b, request, other: a } = await firstToReceive(x, y);
+    await a.close();
+    b.send({ type: MessageType.ACK, requestId: request.requestId, ok: true, result: [{ name: 'genes' }] });
+    const result = await call;
+
+    expect(result.isError).toBeFalsy();
+    expect(text(result)).toContain('genes');
+  });
+
+  it('the page asked closing fails its request at once', async () => {
+    const session = await newSession();
+    const page = await pageIn(session);
+
+    const call = callTool(session, 'list_tracks');
+    await page.next();
+    await page.close();
+    const result = await call;
+
+    expect(result.isError).toBe(true);
+    expect(text(result)).toMatch(/disconnected/i);
+  });
+});
+
+describe('create_shareable_url', () => {
+  /** tools/call straight into the Worker's fetch, with `vars` added to its env. */
+  async function callToolWithEnv(vars, session, name) {
+    const request = new Request('https://jbmcp.test/mcp', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream', 'mcp-session-id': session },
+      body: JSON.stringify({ jsonrpc: '2.0', id: ++rpcId, method: 'tools/call', params: { name, arguments: {} } }),
+    });
+    const res = await worker.fetch(request, { ...env, ...vars }, createExecutionContext());
+    return (await res.json()).result;
+  }
+
+  it('without a TinyURL key answers with the long snapshot link', async () => {
+    const session = await newSession();
+    const page = await pageIn(session);
+
+    const call = callTool(session, 'create_shareable_url');
+    const request = await page.next();
+    page.send({ type: MessageType.ACK, requestId: request.requestId, ok: true, result: 'session=blob:abc123' });
+    const result = await call;
+
+    expect(request.type).toBe(CommandType.GET_COMPRESSED_SESSION);
+    expect(text(result)).toContain(`${env.BROWSER_URL}?session=blob:abc123`);
+  });
+
+  it('with a key, shortens the snapshot link with TinyURL on t.3dg.io', async () => {
+    const session = await newSession();
+    const page = await pageIn(session);
+    const tinyurl = vi.spyOn(globalThis, 'fetch').mockResolvedValue(Response.json({ data: { tiny_url: 'https://t.3dg.io/xyz' } }));
+
+    const call = callToolWithEnv({ TINYURL_API_KEY: 'test-key' }, session, 'create_shareable_url');
+    const request = await page.next();
+    page.send({ type: MessageType.ACK, requestId: request.requestId, ok: true, result: 'session=blob:abc123' });
+    const result = await call;
+
+    expect(tinyurl).toHaveBeenCalledOnce();
+    const [endpoint, init] = tinyurl.mock.calls[0];
+    expect(endpoint).toBe('https://api.tinyurl.com/create');
+    expect(init.headers.Authorization).toBe('Bearer test-key');
+    expect(JSON.parse(init.body)).toEqual({ url: `${env.BROWSER_URL}?session=blob:abc123`, domain: 't.3dg.io' });
+    expect(text(result)).toContain('https://t.3dg.io/xyz');
   });
 });

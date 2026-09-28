@@ -1,8 +1,15 @@
-import { MessageType, isSyncEvent, isAck } from '@aidenlab/juicebox-remote/protocol';
+import { MessageType, CommandType, ErrorCode, isSyncEvent, isAck } from '@aidenlab/juicebox-remote/protocol';
 import { logInfo, logError } from '../lib/logger.js';
 
 /** How long a command waits for its first ack before the tool reports "sent, unconfirmed" (§5.4). */
 const ACK_TIMEOUT_MS = 10_000;
+
+/** A room's storage is deleted this long after its last message (ADR-0006). */
+const ROOM_TTL_MS = 24 * 60 * 60 * 1000;
+
+// Page → room messages kept from the prototype for the saved session and catch-up (design §7).
+const SAVE_SESSION = 'saveSession'; // {compressedSession}
+const REQUEST_SESSION_FROM_PEER = 'requestSessionFromPeer'; // answered with peerSessionData
 
 /**
  * Durable Object for managing WebSocket connections between the MCP server and browser clients.
@@ -13,9 +20,8 @@ export class WebSocketRoom {
   constructor(state, env) {
     this.state = state;
     this.env = env;
-    // Map of requestId -> { resolve, reject, timer } for pending data requests
-    this.pendingRequests = new Map();
-    // Map of requestId -> { resolve, timer } for commands awaiting their first ack
+    // Map of requestId -> { resolve, timer, page } for commands awaiting their first ack;
+    // `page` is the one socket asked, for requests.
     this.pendingAcks = new Map();
   }
 
@@ -27,25 +33,16 @@ export class WebSocketRoom {
       return this.handleWebSocketUpgrade(request);
     }
 
-    // Worker sends a command to the browser
+    // Worker sends a command to every page in the room
     if (url.pathname === '/send') {
       const command = await request.json();
-      return this.sendToClient(command);
+      return Response.json(await this.sendToClient(command, this.state.getWebSockets()));
     }
 
-    // Worker requests session data from browser (synchronous wait for WS response)
-    if (url.pathname === '/request-session-data') {
-      return this.requestDataFromBrowser('getSession', 'sessionData', 'sessionDataError');
-    }
-
-    // Worker requests compressed session data from browser
-    if (url.pathname === '/request-compressed-session-data') {
-      return this.requestDataFromBrowser('getCompressedSession', 'compressedSessionData', 'compressedSessionDataError');
-    }
-
-    // Worker requests track list from browser
-    if (url.pathname === '/request-track-list') {
-      return this.requestDataFromBrowser('getTrackList', 'trackListData', 'trackListError');
+    // Worker asks one page for data (getTrackList, getSession, getCompressedSession)
+    if (url.pathname === '/request') {
+      const command = await request.json();
+      return Response.json(await this.sendToClient(command, this.state.getWebSockets(), { firstOnly: true }));
     }
 
     // Health check / connection status
@@ -74,123 +71,57 @@ export class WebSocketRoom {
   }
 
   /**
-   * Send a command, with a fresh requestId, to every page in the room and wait for
-   * the first ack. Answers {status: 'acked', ok, result?, error?}, {status: 'unconfirmed'}
-   * when no ack arrives within ACK_TIMEOUT_MS, or {status: 'no-page'}.
+   * Send a command, with a fresh requestId, to every socket in `websockets` (or with
+   * `firstOnly`, to the first one that takes it) and wait for the first ack. Resolves
+   * {status: 'acked', ok, result?, error?}, {status: 'unconfirmed'} when no ack arrives
+   * within ACK_TIMEOUT_MS, {status: 'closed'} when the one page asked disconnects
+   * first, or {status: 'no-page'}.
    */
-  async sendToClient(command) {
-    const websockets = this.state.getWebSockets();
+  async sendToClient(command, websockets, { firstOnly = false } = {}) {
     logInfo(`[DO sendToClient] command=${command.type} websockets=${websockets.length}`);
 
     const requestId = crypto.randomUUID();
     const message = JSON.stringify({ ...command, requestId });
-    let sent = 0;
+    const sentTo = [];
     for (const ws of websockets) {
       try {
         ws.send(message);
-        sent++;
+        sentTo.push(ws);
+        if (firstOnly) break;
       } catch (e) {
         logError(`[DO sendToClient] error sending:`, e);
       }
     }
-    if (sent === 0) return Response.json({ status: 'no-page' });
+    if (sentTo.length === 0) return { status: 'no-page' };
 
     // Registered before this handler yields, so no ack can arrive ahead of it.
-    const ack = new Promise((resolve) => {
+    return new Promise((resolve) => {
       const timer = setTimeout(() => {
         this.pendingAcks.delete(requestId);
-        resolve(null);
+        resolve({ status: 'unconfirmed' });
       }, ACK_TIMEOUT_MS);
-      this.pendingAcks.set(requestId, { resolve, timer });
+      this.pendingAcks.set(requestId, { resolve, timer, page: firstOnly ? sentTo[0] : null });
     });
-
-    const reply = await ack;
-    if (!reply) return Response.json({ status: 'unconfirmed' });
-    return Response.json({ status: 'acked', ok: reply.ok, result: reply.result, error: reply.error });
   }
 
   /**
-   * Request data from the browser and wait for the response.
-   * This creates a pending request, sends a command over WebSocket,
-   * and returns a Promise that resolves when the browser responds.
+   * Late joiner catch-up (design §7): the first live peer's session, else the room's
+   * saved session, else an error.
    */
-  async requestDataFromBrowser(commandType, responseType, errorType) {
-    const websockets = this.state.getWebSockets();
-    if (websockets.length === 0) {
-      return Response.json({ error: 'No browser connected' }, { status: 404 });
-    }
+  async sendCatchUp(requester) {
+    const peers = this.state.getWebSockets().filter(ws => ws !== requester);
+    const live = await this.sendToClient({ type: CommandType.GET_SESSION }, peers, { firstOnly: true });
 
-    const requestId = crypto.randomUUID();
-
-    // Create a promise that will be resolved by the webSocketMessage handler
-    const dataPromise = new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
-        this.pendingRequests.delete(requestId);
-        reject(new Error('Timeout waiting for browser response'));
-      }, 15000);
-
-      this.pendingRequests.set(requestId, { resolve, reject, timer, responseType, errorType });
-    });
-
-    // Send command to browser
-    const command = JSON.stringify({ type: commandType, requestId });
-    for (const ws of websockets) {
-      try {
-        ws.send(command);
-        break; // Send to first connected client
-      } catch (e) {
-        // Try next
-      }
-    }
-
-    try {
-      const data = await dataPromise;
-      return Response.json({ data });
-    } catch (error) {
-      return Response.json({ error: error.message }, { status: 500 });
-    }
-  }
-
-  /**
-   * Handle a peer session request: ask another connected browser for its session
-   * and relay the response back to the requesting browser.
-   */
-  async handlePeerSessionRequest(requesterWs) {
-    const websockets = this.state.getWebSockets();
-    // Find a peer (any connected browser that isn't the requester)
-    const peer = websockets.find(ws => ws !== requesterWs);
-    if (!peer) {
-      // No live peers — try stored session
+    let reply;
+    if (live.status === 'acked' && live.ok) {
+      reply = { session: live.result };
+    } else {
       const saved = await this.state.storage.get('session');
-      if (saved) {
-        requesterWs.send(JSON.stringify({ type: 'peerSessionData', compressedSession: saved }));
-      } else {
-        requesterWs.send(JSON.stringify({ type: 'peerSessionData', error: 'No session available' }));
-      }
-      return;
+      reply = saved ? { compressedSession: saved } : { error: 'No session available' };
     }
-
-    const requestId = crypto.randomUUID();
-
-    const dataPromise = new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
-        this.pendingRequests.delete(requestId);
-        reject(new Error('Timeout waiting for peer session data'));
-      }, 15000);
-      this.pendingRequests.set(requestId, {
-        resolve, reject, timer,
-        responseType: 'sessionData',
-        errorType: 'sessionDataError'
-      });
-    });
-
     try {
-      peer.send(JSON.stringify({ type: 'getSession', requestId }));
-      const sessionData = await dataPromise;
-      requesterWs.send(JSON.stringify({ type: 'peerSessionData', sessionData }));
-    } catch (error) {
-      requesterWs.send(JSON.stringify({ type: 'peerSessionData', error: error.message }));
-    }
+      requester.send(JSON.stringify({ type: MessageType.PEER_SESSION_DATA, ...reply }));
+    } catch (e) { /* the late joiner left meanwhile */ }
   }
 
   // --- Hibernation API lifecycle methods ---
@@ -198,6 +129,16 @@ export class WebSocketRoom {
   async webSocketMessage(ws, message) {
     try {
       const data = JSON.parse(typeof message === 'string' ? message : new TextDecoder().decode(message));
+
+      // A room that expired with no page left stays gone (ADR-0006).
+      if (data.type === MessageType.JOIN && (await this.state.storage.get('expired'))) {
+        ws.send(JSON.stringify({ type: MessageType.ERROR, code: ErrorCode.ROOM_EXPIRED }));
+        ws.close(1000, 'room expired');
+        return;
+      }
+
+      // Every message pushes the room's expiry out to 24 h from now (ADR-0006).
+      await this.state.storage.setAlarm(Date.now() + ROOM_TTL_MS);
 
       // The socket already reached this room via /ws?room=; `join` confirms which one.
       if (data.type === MessageType.JOIN) {
@@ -211,38 +152,20 @@ export class WebSocketRoom {
         if (pending) {
           this.pendingAcks.delete(data.requestId);
           clearTimeout(pending.timer);
-          pending.resolve(data);
+          pending.resolve({ status: 'acked', ok: data.ok, result: data.result, error: data.error });
         }
         return;
       }
 
-      // Check if this is a response to a pending request
-      if (data.requestId && this.pendingRequests.has(data.requestId)) {
-        const pending = this.pendingRequests.get(data.requestId);
-        this.pendingRequests.delete(data.requestId);
-        clearTimeout(pending.timer);
-
-        if (data.type === pending.responseType) {
-          // Resolve with the appropriate data field
-          const responseData = data.sessionData || data.compressedSession || data.trackList || data;
-          pending.resolve(responseData);
-        } else if (data.type === pending.errorType) {
-          pending.reject(new Error(data.error || 'Browser returned an error'));
-        } else {
-          pending.resolve(data);
-        }
-        return;
-      }
-
-      // Auto-save: persist compressed session to DO storage
-      if (data.type === 'saveSession' && data.compressedSession) {
+      // Saved session: the page's latest compressed session, for a late joiner with no live peer
+      if (data.type === SAVE_SESSION && data.compressedSession) {
         await this.state.storage.put('session', data.compressedSession);
         return;
       }
 
-      // Late joiner: request session state from a peer browser
-      if (data.type === 'requestSessionFromPeer') {
-        this.handlePeerSessionRequest(ws);
+      // Late joiner: send it the room's current state
+      if (data.type === REQUEST_SESSION_FROM_PEER) {
+        await this.sendCatchUp(ws);
         return;
       }
 
@@ -265,15 +188,28 @@ export class WebSocketRoom {
   }
 
   webSocketClose(ws, code, reason, wasClean) {
-    // Clean up - reject any pending requests
-    for (const [requestId, pending] of this.pendingRequests) {
-      clearTimeout(pending.timer);
-      pending.reject(new Error('Browser disconnected'));
+    // A request asked this page alone, so it fails now; commands sent to every page wait on.
+    for (const [requestId, pending] of this.pendingAcks) {
+      if (pending.page === ws) {
+        this.pendingAcks.delete(requestId);
+        clearTimeout(pending.timer);
+        pending.resolve({ status: 'closed' });
+      }
     }
-    this.pendingRequests.clear();
+    // Answer the close so the socket leaves getWebSockets() (no auto-reply at this compatibility date).
+    try { ws.close(); } catch (e) { /* already closed */ }
   }
 
   webSocketError(ws, error) {
     logError('WebSocket error in Durable Object:', error);
+  }
+
+  /** 24 h after the last message (ADR-0006): delete the room's storage. */
+  async alarm() {
+    await this.state.storage.deleteAll();
+    // With no page left the room is gone and later joins are refused; a connected page keeps it.
+    if (this.state.getWebSockets().length === 0) {
+      await this.state.storage.put('expired', true);
+    }
   }
 }

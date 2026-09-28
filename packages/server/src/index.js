@@ -142,9 +142,17 @@ async function handleMcpRequest(request, env) {
     });
 
     // Fallback: ChatGPT doesn't echo mcp-session-id back, but sends x-openai-session on every request.
-    // HMAC the raw token so it's not exposed in browser URLs.
+    // HMAC the raw token so it's not exposed in browser URLs. No secret, no fallback key.
+    if (!sessionId && openaiSession && !env.SESSION_HMAC_SECRET) {
+      logError('[MCP] SESSION_HMAC_SECRET is not set; refusing x-openai-session request');
+      return Response.json({
+        jsonrpc: '2.0',
+        error: { code: -32603, message: 'Server misconfigured: SESSION_HMAC_SECRET is not set' },
+        id: body?.id ?? null
+      }, { status: 500 });
+    }
     const effectiveSessionId = sessionId ||
-      (openaiSession ? await deriveSessionId(openaiSession, env.SESSION_HMAC_SECRET || 'juicebox-mcp-session-key') : null);
+      (openaiSession ? await deriveSessionId(openaiSession, env.SESSION_HMAC_SECRET) : null);
 
     // The room this MCP session is bound to: the one join_room stored, else the
     // room named by the session id. Looked up at most once per request, and only
@@ -165,6 +173,17 @@ async function handleMcpRequest(request, env) {
       return env.WEBSOCKET_ROOM.get(env.WEBSOCKET_ROOM.idFromName(room));
     }
 
+    async function postToRoom(path, command) {
+      const stub = await getDoStub();
+      if (!stub) return { status: 'no-page' };
+      const resp = await stub.fetch(new Request(`https://do${path}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(command)
+      }));
+      return resp.json();
+    }
+
     const deps = {
       sessionId: effectiveSessionId,
       browserUrl,
@@ -178,43 +197,15 @@ async function handleMcpRequest(request, env) {
       },
 
       // Resolves {status: 'acked', ok, result?, error?} | {status: 'unconfirmed'} | {status: 'no-page'}.
-      sendCommand: async (command) => {
+      sendCommand: (command) => {
         logInfo(`[sendCommand] type=${command.type} sessionId=${effectiveSessionId || 'NONE'}`);
-        const stub = await getDoStub();
-        if (!stub) return { status: 'no-page' };
-        const resp = await stub.fetch(new Request('https://do/send', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(command)
-        }));
-        return resp.json();
+        return postToRoom('/send', command);
       },
 
-      requestSessionData: async () => {
-        const stub = await getDoStub();
-        if (!stub) throw new Error('No session ID available');
-        const resp = await stub.fetch(new Request('https://do/request-session-data', { method: 'POST' }));
-        const result = await resp.json();
-        if (result.error) throw new Error(result.error);
-        return result.data;
-      },
-
-      requestCompressedSessionData: async () => {
-        const stub = await getDoStub();
-        if (!stub) throw new Error('No session ID available');
-        const resp = await stub.fetch(new Request('https://do/request-compressed-session-data', { method: 'POST' }));
-        const result = await resp.json();
-        if (result.error) throw new Error(result.error);
-        return result.data;
-      },
-
-      requestTrackList: async () => {
-        const stub = await getDoStub();
-        if (!stub) throw new Error('No session ID available');
-        const resp = await stub.fetch(new Request('https://do/request-track-list', { method: 'POST' }));
-        const result = await resp.json();
-        if (result.error) throw new Error(result.error);
-        return result.data;
+      // Same, but asks only the first live page; adds {status: 'closed'} if it disconnects first.
+      sendRequest: (command) => {
+        logInfo(`[sendRequest] type=${command.type} sessionId=${effectiveSessionId || 'NONE'}`);
+        return postToRoom('/request', command);
       },
 
       isBrowserConnected: async () => {
