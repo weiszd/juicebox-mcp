@@ -51,7 +51,8 @@ A tool call flows: client → `/mcp` tool handler → Durable Object → WebSock
 - `src/durableObjects/McpSession.js` — one Durable Object per MCP session; stores the room `join_room` bound it to.
 - `src/mcp/toolHandlers.js` — the single `registerTools(mcpServer, deps)` tool catalogue. `deps` abstracts the Durable Object (`sendCommand`, `sendRequest`, `shortenURL`, …).
 - `src/search/` — dataset search pipeline: `catalogs` (ENCODE and 4DN igv-data TSV URLs + columns, copied from juicebox-web; keep in sync) → `dataSourceConfigs` (how each TSV is read) → `dataParsers` → `metadataEnricher` → `queryExpander` (genomics synonym dictionary) → `mapFilter` → `resultFormatter`.
-- `src/urlShortener.js` — TinyURL helper.
+- `src/mcp/juiceboxView.js` — the MCP App view (`ui://juicebox/join`, SEP-1865) that `get_juicebox_url` names in `_meta`: a card with the join link and its QR (from `structuredContent`), shown in the app pane by hosts that render MCP Apps; the link opens through the host. Claude's sandbox forbids framing other origins, so the viewer itself is not embedded.
+- `src/qrPng.js`, `src/urlShortener.js` — join-link QR and TinyURL helpers.
 - `src/lib/logger.js` — use `logInfo`/`logWarn`/`logError` in server code; **no `console.log` in tool paths**.
 
 ### `packages/remote`

@@ -11,6 +11,8 @@ import { DATA_SOURCES, getDataSource, getAllSourceIds, isValidSource } from '../
 import { parseDataSource } from '../search/dataParsers.js';
 import { filterMaps } from '../search/mapFilter.js';
 import { formatSearchResults, formatSearchResultsJSON } from '../search/resultFormatter.js';
+import { generateQRPng } from '../qrPng.js';
+import { VIEW_URI, VIEW_HTML, VIEW_META, VIEW_MIME_TYPE, TOOL_META } from './juiceboxView.js';
 
 // Helper function to convert hex color to RGB
 function hexToRgb(hex) {
@@ -93,7 +95,7 @@ export function registerTools(mcpServer, deps) {
     return { result: outcome.result };
   }
 
-  // MCP resources: the data source configurations.
+  // MCP resources: the data source configurations and the MCP App view.
   // (The prototype called the SDK's internal setResourceRequestHandlers() with
   // arguments it ignores, so these were never served; registerResource is the API.)
   for (const [key, name] of [['4dn', '4DN'], ['encode', 'ENCODE']]) {
@@ -104,6 +106,12 @@ export function registerTools(mcpServer, deps) {
       async (uri) => ({ contents: [{ uri: uri.href, mimeType: 'application/json', text: JSON.stringify(getDataSource(key), null, 2) }] })
     );
   }
+  mcpServer.registerResource(
+    'Juicebox join card',
+    VIEW_URI,
+    { description: 'MCP App view for get_juicebox_url: the join link and its QR code', mimeType: VIEW_MIME_TYPE },
+    async (uri) => ({ contents: [{ uri: uri.href, mimeType: VIEW_MIME_TYPE, text: VIEW_HTML, _meta: VIEW_META }] })
+  );
   // --- Tool: load_map ---
   mcpServer.registerTool(
     'load_map',
@@ -528,12 +536,15 @@ export function registerTools(mcpServer, deps) {
   );
 
   // --- Tool: get_juicebox_url ---
+  // Hosts that render MCP Apps show VIEW_URI (link + QR card) from structuredContent;
+  // the others get the text link.
   mcpServer.registerTool(
     'get_juicebox_url',
     {
       title: 'Get Juicebox URL',
-      description: 'Get the join link that opens Juicebox connected to the room bound to this MCP session. Use this when users ask how to connect, how to open the Juicebox app, or say things like "Hello juicebox", "Open juicebox", "Show me juicebox", "Launch juicebox", etc. Present the link to the user as a clickable link (a plain URL or markdown link, never inside a code block) so one click opens Juicebox in their browser. The page itself offers a QR code of the join link for phones and other devices.',
-      inputSchema: {}
+      description: 'Get the join link that opens Juicebox connected to the room bound to this MCP session. Use this when users ask how to connect, how to open the Juicebox app, or say things like "Hello juicebox", "Open juicebox", "Show me juicebox", "Launch juicebox", etc. Hosts that render MCP Apps show a card with the link and its QR code; also present the link to the user as a clickable link (a plain URL or markdown link, never inside a code block) so one click opens Juicebox in their browser.',
+      inputSchema: {},
+      _meta: TOOL_META
     },
     async () => {
       const room = await getRoom();
@@ -560,7 +571,13 @@ export function registerTools(mcpServer, deps) {
           mimeType: 'text/html'
         }
       ];
-      return { content, structuredContent: { room, joinUrl: connectionUrl } };
+      const structuredContent = { room, joinUrl: connectionUrl };
+      try {
+        structuredContent.qrPng = generateQRPng(connectionUrl); // base64 PNG, drawn by the view
+      } catch {
+        // QR is best-effort
+      }
+      return { content, structuredContent };
     }
   );
 
