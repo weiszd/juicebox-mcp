@@ -28,9 +28,11 @@ export function observe(hic, send) {
   let locusTimer;
   let lastLocusSent = -Infinity;
 
-  // The name a track pair had when peers last heard of it; a rename's event carries only the new one.
+  // The name a track pair or 2D track had when peers last heard of it: a rename's
+  // event carries only the new one, and the track already has it.
   const trackNames = new WeakMap();
-  const nameOf = (trackPair) => trackNames.get(trackPair) ?? trackPair.track.name;
+  const nameOf = (track) => trackNames.get(track) ?? (track.track ?? track).name;
+  const dropped = new WeakSet(); // duplicate 2D tracks being removed, whose removal peers are not told of
 
   const emit = (syncType, payload) => {
     if (!guarded) send({ type: MessageType.SYNC_EVENT, syncType, ...payload });
@@ -75,12 +77,27 @@ export function observe(hic, send) {
       if (typeof config?.url === 'string') emit(SyncEventType.TRACK_LOAD, { configs: [config] });
     },
     TrackXYPairRemoval: ({ data: trackPair }) => emit(SyncEventType.TRACK_REMOVE, { track: nameOf(trackPair) }),
-    TrackXYPairChange: ({ data: { trackPair, property, value } }) => {
-      const track = nameOf(trackPair);
-      if (property === 'name') trackNames.set(trackPair, value); // also when guarded: peers now use it
-      const change = trackChanges[property]?.(value);
-      if (change) emit(change[0], { track, ...change[1] });
+    TrackXYPairChange: ({ data: { trackPair, property, value } }) => trackChanged(trackPair, property, value),
+    Track2DLoad: ({ data: track2D }) => {
+      const { config } = track2D;
+      const url = config?.url;
+      // A 2D track has no pending row, so a peer's trackLoad for one still loading here
+      // loads it again (a loadTrack command or a restored session reaches every page):
+      // the second copy to arrive goes.
+      const tracks2D = observed?.tracks2D ?? [];
+      const held = typeof url === 'string' && tracks2D.some((t) => t !== track2D && t.config?.url === url);
+      if (held && tracks2D.includes(track2D)) {
+        dropped.add(track2D);
+        observed.removeTrack2D(track2D);
+        return;
+      }
+      trackNames.set(track2D, track2D.name);
+      if (typeof url === 'string') emit(SyncEventType.TRACK_LOAD, { configs: [config] });
     },
+    Track2DRemoval: ({ data: track2D }) => {
+      if (!dropped.delete(track2D)) emit(SyncEventType.TRACK_REMOVE, { track: nameOf(track2D) });
+    },
+    Track2DChange: ({ data: { track2D, property, value } }) => trackChanged(track2D, property, value),
   };
 
   const appliers = {
@@ -108,19 +125,29 @@ export function observe(hic, send) {
       // A url a track pair already carries (a pending one its own config, a loaded one its track's)
       // is not loaded again: a loadTrack command or a restored session reaches every page, and each
       // page's tracks load after the guard lifts (ADR-0017), so every page sends trackLoad for them.
-      const held = new Set(browser.trackPairs.map(({ track, config = track.config }) => config?.url));
+      const held = new Set([
+        ...browser.trackPairs.map(({ track, config = track.config }) => config?.url),
+        ...browser.tracks2D.map(({ config }) => config?.url),
+      ]);
       const toLoad = configs.filter(({ url }) => !held.has(url));
-      // Resolves once every track has loaded, so their TrackXYPairLoad events fall inside the guard.
+      // Resolves once every track has loaded, so their load events fall inside the guard.
       if (toLoad.length) return browser.loadTracks(toLoad);
     },
-    [SyncEventType.TRACK_REMOVE]: (browser, { track }) =>
-      browser.layoutController.removeTrackXYPair(trackPairNamed(browser, track)),
-    [SyncEventType.TRACK_COLOR_CHANGE]: (browser, { track, colorString }) =>
-      trackPairNamed(browser, track).setColor(colorString),
+    [SyncEventType.TRACK_REMOVE]: (browser, { track }) => {
+      const { trackPair, track2D } = trackNamed(browser, track);
+      if (track2D) browser.removeTrack2D(track2D);
+      else browser.layoutController.removeTrackXYPair(trackPair);
+    },
+    [SyncEventType.TRACK_COLOR_CHANGE]: (browser, { track, colorString }) => {
+      const { trackPair, track2D } = trackNamed(browser, track);
+      if (track2D) browser.setTrack2DColor(track2D, colorString);
+      else trackPair.setColor(colorString);
+    },
     [SyncEventType.TRACK_NAME_CHANGE]: (browser, { track, name }) => {
-      const trackPair = trackPairNamed(browser, track);
-      trackPair.track.name = name; // what the track menu's rename writes; the label setter leaves it
-      trackPair.setTrackLabelName(name);
+      const { trackPair, track2D } = trackNamed(browser, track);
+      if (track2D) browser.setTrack2DName(track2D, name);
+      // What the track menu's rename writes; igv's setter relabels the row, which posts the change event.
+      else trackPair.track.name = name;
     },
     [SyncEventType.TRACK_DATA_RANGE_CHANGE]: (browser, { track, min, max }) =>
       trackPairNamed(browser, track).setDataRange(min, max),
@@ -130,10 +157,27 @@ export function observe(hic, send) {
       trackPairNamed(browser, track).setLogScale(enabled),
   };
 
+  /** A track pair's or a 2D track's change; peers name the track as they last heard it. */
+  function trackChanged(subject, property, value) {
+    const track = nameOf(subject);
+    if (property === 'name') trackNames.set(subject, value); // also when guarded: peers now use it
+    const change = trackChanges[property]?.(value);
+    if (change) emit(change[0], { track, ...change[1] });
+  }
+
   function trackPairNamed(browser, name) {
     const trackPair = browser.trackPairs.find((tp) => nameOf(tp) === name);
     if (!trackPair) throw new Error(`No track named ${name}`);
     return trackPair;
+  }
+
+  /** The track pair, or else the 2D track, peers know by `name`: `{trackPair}` or `{track2D}`. */
+  function trackNamed(browser, name) {
+    const trackPair = browser.trackPairs.find((tp) => nameOf(tp) === name);
+    if (trackPair) return { trackPair };
+    const track2D = browser.tracks2D.find((t) => nameOf(t) === name);
+    if (!track2D) throw new Error(`No track named ${name}`);
+    return { track2D };
   }
 
   function locusChanged(dragging) {
@@ -156,6 +200,10 @@ export function observe(hic, send) {
       ? Object.entries(callbacks).map(([name, fn]) => browser.coordinator.addCallback(name, fn))
       : [];
     observed = browser;
+    // Tracks already on the panel are known by their current names.
+    for (const track of [...(browser?.trackPairs ?? []), ...(browser?.tracks2D ?? [])]) {
+      trackNames.set(track, nameOf(track));
+    }
   }
 
   async function guard(fn) {

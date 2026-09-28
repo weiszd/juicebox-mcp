@@ -89,19 +89,26 @@ const appliers = {
 
   [CommandType.REMOVE_TRACK]: async (command, { hic }) => {
     const browser = browserWithMap(hic);
-    browser.layoutController.removeTrackXYPair(findTrackPair(browser, command));
+    const { trackPair, track2D } = findTrack(browser, command);
+    if (track2D) browser.removeTrack2D(track2D);
+    else browser.layoutController.removeTrackXYPair(trackPair);
   },
 
   [CommandType.SET_TRACK_COLOR]: async (command, { hic }) => {
-    // No colour resets the track to its default.
-    findTrackPair(browserWithMap(hic), command).setColor(command.color ? rgbString(command.color) : undefined);
+    const browser = browserWithMap(hic);
+    const { trackPair, track2D } = findTrack(browser, command);
+    // No colour resets the track to its default (a 2D track's features' own colours).
+    const color = command.color ? rgbString(command.color) : undefined;
+    if (track2D) browser.setTrack2DColor(track2D, color);
+    else trackPair.setColor(color);
   },
 
   [CommandType.SET_TRACK_NAME]: async (command, { hic }) => {
-    const trackPair = findTrackPair(browserWithMap(hic), command);
-    // The label first, so its change event still sees the old name on the track.
-    trackPair.setTrackLabelName(command.name);
-    trackPair.track.name = command.name;
+    const browser = browserWithMap(hic);
+    const { trackPair, track2D } = findTrack(browser, command);
+    if (track2D) browser.setTrack2DName(track2D, command.name);
+    // igv's name setter relabels the row, which posts the change event once.
+    else trackPair.track.name = command.name;
   },
 
   [CommandType.SET_TRACK_DATA_RANGE]: async (command, { hic }) => {
@@ -145,12 +152,12 @@ const appliers = {
 };
 
 /**
- * The track pair a command's `track` names: a 1-based index over the track pairs
- * then the 2D tracks (the order getTrackList numbers them in), or else a name,
- * matched case-insensitively. Throws for an unknown track and for a 2D track,
- * which has no public setters or removal to call.
+ * The track a command's `track` names, as `{trackPair}` or `{track2D}`: a
+ * 1-based index over the track pairs then the 2D tracks (the order getTrackList
+ * numbers them in), or else a name, matched case-insensitively. Throws for an
+ * unknown track.
  */
-function findTrackPair({ trackPairs, tracks2D }, { type, track: identifier }) {
+function findTrack({ trackPairs, tracks2D }, { track: identifier }) {
   const id = String(identifier).trim();
   let trackPair, track2D;
   if (/^\d+$/.test(id)) {
@@ -162,8 +169,14 @@ function findTrackPair({ trackPairs, tracks2D }, { type, track: identifier }) {
     trackPair = trackPairs.find((tp) => named(tp.track));
     if (!trackPair) track2D = tracks2D.find(named);
   }
-  if (track2D) throw new Error(`Track ${identifier} is a 2D track; ${type} applies to 1D tracks only`);
-  if (!trackPair) throw new Error(`Track not found: ${identifier}`);
+  if (!trackPair && !track2D) throw new Error(`Track not found: ${identifier}`);
+  return { trackPair, track2D };
+}
+
+/** The track pair a command names; throws for a 2D track, which has no data range or scale. */
+function findTrackPair(browser, command) {
+  const { trackPair } = findTrack(browser, command);
+  if (!trackPair) throw new Error(`Track ${command.track} is a 2D track; ${command.type} does not apply to 2D tracks`);
   return trackPair;
 }
 
