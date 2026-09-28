@@ -181,7 +181,7 @@ juicebox-mcp/
     src/room.js               Durable Object (was WebSocketRoom.js)
     src/tools.js              registerTools(mcpServer, deps) — single definition
     src/search/               dataParsers, metadataEnricher, queryExpander, mapFilter, resultFormatter
-    src/qrPng.js, urlShortener.js
+    src/urlShortener.js
     wrangler.toml
   packages/connector-mcpb/    manifest.json → `npx mcp-remote https://jbmcp.3dg.io/mcp`
   docs/
@@ -192,7 +192,7 @@ juicebox-mcp/
   (local); Claude Code → `claude mcp add --transport http`; ChatGPT →
   connector (existing `x-openai-session` HMAC fallback); Inspector/Cursor native.
 - **Tool changes vs prototype:**
-  - `get_juicebox_url` → returns the **join link** (§7) + QR PNG for the room
+  - `get_juicebox_url` → returns the **join link** (§7) for the room (the QR of it lives in the juicebox-web room widget, §8)
     bound to this MCP session (minted on `initialize`, or set by `join_room`).
   - **New** `join_room {room}` → binds the MCP session to an existing room,
     e.g. one a page started (§5.1) whose join link the user pasted into chat.

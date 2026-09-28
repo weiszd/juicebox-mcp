@@ -7,9 +7,6 @@
  */
 
 import { z } from 'zod';
-import { generateQRPng } from '../qrPng.js';
-import { registerAppTool, RESOURCE_MIME_TYPE } from '@modelcontextprotocol/ext-apps/server';
-import { VIEW_URI, VIEW_HTML, viewMeta } from './juiceboxView.js';
 import { DATA_SOURCES, getDataSource, getAllSourceIds, isValidSource } from '../search/dataSourceConfigs.js';
 import { parseDataSource } from '../search/dataParsers.js';
 import { filterMaps } from '../search/mapFilter.js';
@@ -96,7 +93,7 @@ export function registerTools(mcpServer, deps) {
     return { result: outcome.result };
   }
 
-  // MCP resources: the data source configurations and the MCP App view.
+  // MCP resources: the data source configurations.
   // (The prototype called the SDK's internal setResourceRequestHandlers() with
   // arguments it ignores, so these were never served; registerResource is the API.)
   for (const [key, name] of [['4dn', '4DN'], ['encode', 'ENCODE']]) {
@@ -107,13 +104,6 @@ export function registerTools(mcpServer, deps) {
       async (uri) => ({ contents: [{ uri: uri.href, mimeType: 'application/json', text: JSON.stringify(getDataSource(key), null, 2) }] })
     );
   }
-  mcpServer.registerResource(
-    'Juicebox view',
-    VIEW_URI,
-    { description: 'MCP App view: the Juicebox page in the session\'s room, shown by get_juicebox_url', mimeType: RESOURCE_MIME_TYPE },
-    async (uri) => ({ contents: [{ uri: uri.href, mimeType: RESOURCE_MIME_TYPE, text: VIEW_HTML, _meta: viewMeta(browserUrl) }] })
-  );
-
   // --- Tool: load_map ---
   mcpServer.registerTool(
     'load_map',
@@ -538,16 +528,12 @@ export function registerTools(mcpServer, deps) {
   );
 
   // --- Tool: get_juicebox_url ---
-  // An MCP Apps host renders VIEW_URI (the viewer, framed in the pane) for this
-  // tool and reads structuredContent; other hosts get the text link and the QR.
-  registerAppTool(
-    mcpServer,
+  mcpServer.registerTool(
     'get_juicebox_url',
     {
       title: 'Get Juicebox URL',
-      description: 'Open Juicebox connected to the room bound to this MCP session. Use this when users ask how to connect, how to open the Juicebox app, or say things like "Hello juicebox", "Open juicebox", "Show me juicebox", "Launch juicebox", etc. In hosts that render MCP Apps the viewer appears in the app pane. Also present the join link to the user as a clickable link (a plain URL or markdown link, never inside a code block) so one click opens Juicebox in their browser; the QR code image the tool also returns lets them open the same room on a phone or another device, so show it too.',
-      inputSchema: {},
-      _meta: { ui: { resourceUri: VIEW_URI } }
+      description: 'Get the join link that opens Juicebox connected to the room bound to this MCP session. Use this when users ask how to connect, how to open the Juicebox app, or say things like "Hello juicebox", "Open juicebox", "Show me juicebox", "Launch juicebox", etc. Present the link to the user as a clickable link (a plain URL or markdown link, never inside a code block) so one click opens Juicebox in their browser. The page itself offers a QR code of the join link for phones and other devices.',
+      inputSchema: {}
     },
     async () => {
       const room = await getRoom();
@@ -560,7 +546,7 @@ export function registerTools(mcpServer, deps) {
 
       // A bare URL and a markdown link: chat clients render both as clickable; a
       // code block would not be. The resource_link is the same link for clients that
-      // render link content blocks.
+      // render link content blocks (Cowork opens it in its browser pane).
       const content = [
         {
           type: 'text',
@@ -574,18 +560,6 @@ export function registerTools(mcpServer, deps) {
           mimeType: 'text/html'
         }
       ];
-
-      try {
-        const qrBase64 = generateQRPng(connectionUrl);
-        content.push({
-          type: 'image',
-          data: qrBase64,
-          mimeType: 'image/png'
-        });
-      } catch (e) {
-        // QR generation is best-effort
-      }
-
       return { content, structuredContent: { room, joinUrl: connectionUrl } };
     }
   );

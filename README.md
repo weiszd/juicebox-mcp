@@ -32,7 +32,7 @@ The server is `https://jbmcp.3dg.io/mcp` (Streamable HTTP, no auth).
   }
   ```
 
-Then ask for the Juicebox link. `get_juicebox_url` returns a join link (`https://aidenlab.org/juicebox/?room=…`) and its QR code; open it, and ask the client to load a map and go to a locus. A page that started its own room ("Start room" in juicebox-web) can be handed to the client by pasting its join link; the client calls `join_room`.
+Then ask for the Juicebox link. `get_juicebox_url` returns a join link (`https://aidenlab.org/juicebox/?room=…`); open it, and ask the client to load a map and go to a locus. A page that started its own room ("Start room" in juicebox-web) can be handed to the client by pasting its join link; the client calls `join_room`.
 
 ## Run everything locally
 

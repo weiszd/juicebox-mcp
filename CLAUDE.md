@@ -50,9 +50,8 @@ A tool call flows: client → `/mcp` tool handler → Durable Object → WebSock
 - `src/durableObjects/WebSocketRoom.js` — one Durable Object per room; owns the sockets, relays sync events to other peers, fans commands out and waits for acks, keeps the last saved session for late joiners (`requestSessionFromPeer` → `peerSessionData`). Every message re-arms an alarm 24 h out; it deletes the room's storage and, if no page is left, marks the room expired so later joins get `error {code: 'room-expired'}` (ADR-0006).
 - `src/durableObjects/McpSession.js` — one Durable Object per MCP session; stores the room `join_room` bound it to.
 - `src/mcp/toolHandlers.js` — the single `registerTools(mcpServer, deps)` tool catalogue. `deps` abstracts the Durable Object (`sendCommand`, `sendRequest`, `shortenURL`, …).
-- `src/mcp/juiceboxView.js` — the MCP App view (`ui://juicebox/view`, SEP-1865): HTML that frames the join link, which `get_juicebox_url` names in `_meta.ui.resourceUri` so hosts that render MCP Apps (Claude Desktop, claude.ai) show the viewer in the app pane; its CSP `frameDomains` is the origin of `BROWSER_URL`. Other hosts ignore it and use the text link and QR.
 - `src/search/` — dataset search pipeline: `catalogs` (ENCODE and 4DN igv-data TSV URLs + columns, copied from juicebox-web; keep in sync) → `dataSourceConfigs` (how each TSV is read) → `dataParsers` → `metadataEnricher` → `queryExpander` (genomics synonym dictionary) → `mapFilter` → `resultFormatter`.
-- `src/qrPng.js`, `src/urlShortener.js` — join-link QR and TinyURL helpers.
+- `src/urlShortener.js` — TinyURL helper.
 - `src/lib/logger.js` — use `logInfo`/`logWarn`/`logError` in server code; **no `console.log` in tool paths**.
 
 ### `packages/remote`

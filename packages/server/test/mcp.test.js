@@ -4,7 +4,6 @@
  */
 import { SELF, env, runInDurableObject, createExecutionContext } from 'cloudflare:test';
 import { describe, it, expect, afterEach, vi } from 'vitest';
-import jsQR from 'jsqr';
 import { MessageType, CommandType } from '@aidenlab/juicebox-remote/protocol';
 import { openPage, join, closePages } from './pages.js';
 import prototypeTools from './fixtures/prototype-tools.json';
@@ -54,44 +53,6 @@ async function pageIn(room) {
 async function nextCommand(page) {
   expect((await page.next()).type).toBe(MessageType.TOOL_CALL);
   return page.next();
-}
-
-/**
- * Decode a QR code PNG as the server writes it (1-bit indexed, unfiltered rows)
- * and return the text it encodes.
- */
-async function decodeQrPng(base64) {
-  const png = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
-  const view = new DataView(png.buffer);
-  let width, height, palette;
-  const idat = [];
-  for (let off = 8; off < png.length; ) {
-    const len = view.getUint32(off);
-    const type = String.fromCharCode(...png.subarray(off + 4, off + 8));
-    const data = png.subarray(off + 8, off + 8 + len);
-    if (type === 'IHDR') {
-      width = view.getUint32(off + 8);
-      height = view.getUint32(off + 12);
-      expect([data[8], data[9], data[12]]).toEqual([1, 3, 0]); // bit depth 1, indexed, no interlace
-    }
-    if (type === 'PLTE') palette = data;
-    if (type === 'IDAT') idat.push(data);
-    off += 12 + len;
-  }
-  const inflated = new Blob(idat).stream().pipeThrough(new DecompressionStream('deflate'));
-  const raw = new Uint8Array(await new Response(inflated).arrayBuffer());
-
-  const rowBytes = Math.ceil(width / 8);
-  const rgba = new Uint8ClampedArray(width * height * 4);
-  for (let y = 0; y < height; y++) {
-    const row = y * (1 + rowBytes);
-    expect(raw[row]).toBe(0); // filter: None
-    for (let x = 0; x < width; x++) {
-      const index = (raw[row + 1 + (x >> 3)] >> (7 - (x & 7))) & 1;
-      rgba.set([...palette.subarray(index * 3, index * 3 + 3), 255], (y * width + x) * 4);
-    }
-  }
-  return jsQR(rgba, width, height)?.data;
 }
 
 describe('initialize', () => {
@@ -280,24 +241,12 @@ describe('join link and join_room', () => {
     expect(text(result)).toContain(`?room=${session}`);
   });
 
-  it('get_juicebox_url is an MCP App: the tool names the view, which frames the page (ticket 23)', async () => {
+  it('serves the data source configurations as resources', async () => {
     const session = await newSession();
-    const tools = (await (await rpc('tools/list', {}, { 'mcp-session-id': session })).json()).result.tools;
-    const tool = tools.find((t) => t.name === 'get_juicebox_url');
-    expect(tool._meta.ui.resourceUri).toBe('ui://juicebox/view');
-    expect(tool._meta['ui/resourceUri']).toBe('ui://juicebox/view'); // legacy key, older hosts
-
     const listed = (await (await rpc('resources/list', {}, { 'mcp-session-id': session })).json()).result.resources;
-    expect(listed.map((r) => r.uri)).toEqual(expect.arrayContaining(['ui://juicebox/view', 'juicebox://datasource/4dn', 'juicebox://datasource/encode']));
+    expect(listed.map((r) => r.uri).sort()).toEqual(['juicebox://datasource/4dn', 'juicebox://datasource/encode']);
     const encode = (await (await rpc('resources/read', { uri: 'juicebox://datasource/encode' }, { 'mcp-session-id': session })).json()).result.contents[0];
     expect(JSON.parse(encode.text).columns).toBeDefined();
-    const view = (await (await rpc('resources/read', { uri: 'ui://juicebox/view' }, { 'mcp-session-id': session })).json()).result.contents[0];
-    expect(view.mimeType).toBe('text/html;profile=mcp-app');
-    expect(view.text).toContain('<iframe');
-    const result = await callTool(session, 'get_juicebox_url');
-    const link = text(result).match(/https?:\/\/\S+/)[0];
-    expect(view._meta.ui.csp.frameDomains).toEqual([new URL(link).origin]);
-    expect(result.structuredContent).toEqual({ room: session, joinUrl: link });
   });
 
   it('get_juicebox_url gives the join link as a clickable link, not a code block', async () => {
@@ -311,7 +260,7 @@ describe('join link and join_room', () => {
     expect(resourceLink.uri).toBe(link);
   });
 
-  it('after join_room, get_juicebox_url returns that room\'s join link and its QR decodes to it', async () => {
+  it('after join_room, get_juicebox_url returns that room\'s join link', async () => {
     const session = await newSession();
     const room = await newSession(); // any other room id
 
@@ -321,9 +270,7 @@ describe('join link and join_room', () => {
     expect(joined.isError).toBeFalsy();
     const link = text(result).match(/https?:\/\/\S+/)[0];
     expect(new URL(link).searchParams.get('room')).toBe(room);
-    const qr = result.content.find((c) => c.type === 'image');
-    expect(qr.mimeType).toBe('image/png');
-    expect(await decodeQrPng(qr.data)).toBe(link);
+    expect(result.structuredContent).toEqual({ room, joinUrl: link });
   });
 
   it('after join_room, commands go to the pages in the joined room', async () => {

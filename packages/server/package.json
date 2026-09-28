@@ -11,14 +11,12 @@
   },
   "dependencies": {
     "@aidenlab/juicebox-remote": "^2.0.0",
-    "@modelcontextprotocol/ext-apps": "^1.7.5",
     "@modelcontextprotocol/sdk": "^1.22.0",
     "qrcode": "^1.5.4",
     "zod": "^3.25.76"
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.22.0",
-    "jsqr": "^1.4.0",
     "wrangler": "^4.0.0"
   }
 }
