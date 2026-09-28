@@ -41,7 +41,7 @@ FakeSocket.instances = [];
 
 // Stand-in for the juicebox.js namespace: one current browser whose public
 // surface members are spies. `mapLoaded: false` models a page with no map yet.
-function fakeHic({ mapLoaded = true } = {}) {
+function fakeHic({ mapLoaded = true, trackPairs = [], tracks2D = [] } = {}) {
   const colorScale = {
     threshold: 2000,
     getThreshold() {
@@ -70,14 +70,34 @@ function fakeHic({ mapLoaded = true } = {}) {
       setBackgroundColor: vi.fn(),
       viewportElement: { clientWidth: 800, clientHeight: 600 },
     },
+    trackPairs,
+    tracks2D,
+    loadTracks: vi.fn(() => new Promise(() => {})), // a track load that never finishes
+    layoutController: { removeTrackXYPair: vi.fn() },
   };
   return {
     getCurrentBrowser: vi.fn(() => browser),
     restoreSession: vi.fn(async () => {}),
+    toJSON: vi.fn(() => ({ browsers: [{ url: 'https://maps.example/a.hic', tracks: [] }] })),
+    compressedSession: vi.fn(() => 'session=blob:abc123'),
     browser,
     colorScale,
   };
 }
+
+/** A 1D track pair: `track` carries the look, the setters are spies. */
+function fakeTrackPair(name, look = {}) {
+  return {
+    track: { name, config: { url: `https://tracks.example/${name}.bw` }, ...look },
+    setColor: vi.fn(),
+    setTrackLabelName: vi.fn(),
+    setDataRange: vi.fn(),
+    setAutoscale: vi.fn(),
+    setLogScale: vi.fn(),
+  };
+}
+
+const fakeTrack2D = (name, color) => ({ name, color, config: { url: `https://tracks.example/${name}.bedpe` } });
 
 const hic = fakeHic();
 const container = {};
@@ -496,5 +516,213 @@ describe('attachRemote: §5.2 view command rows', () => {
       ['o2', true],
       ['o3', true],
     ]);
+  });
+});
+
+describe('attachRemote: §5.2 track command rows', () => {
+  it('loadTrack calls loadTracks with the track config and acks ok without waiting for the load', async () => {
+    const fake = fakeHic();
+    const { send } = await joinedWith(fake);
+    const ack = await send({
+      type: 'loadTrack',
+      requestId: 'l1',
+      url: 'https://tracks.example/genes.txt.gz',
+      name: 'Refseq Select',
+      color: { r: 0, g: 128, b: 255 },
+      trackType: 'annotation',
+      format: 'refgene',
+    });
+    expect(fake.browser.loadTracks).toHaveBeenCalledWith([
+      {
+        url: 'https://tracks.example/genes.txt.gz',
+        name: 'Refseq Select',
+        color: 'rgb(0,128,255)',
+        type: 'annotation',
+        format: 'refgene',
+      },
+    ]);
+    expect(ack).toEqual({ type: 'ack', requestId: 'l1', ok: true });
+  });
+
+  it('loadTrack with only a url passes only the url', async () => {
+    const fake = fakeHic();
+    const { send } = await joinedWith(fake);
+    await send({ type: 'loadTrack', requestId: 'l2', url: 'https://tracks.example/a.bw' });
+    expect(fake.browser.loadTracks).toHaveBeenCalledWith([{ url: 'https://tracks.example/a.bw' }]);
+  });
+
+  it('loadTrack before any map is loaded acks ok:false', async () => {
+    const fake = fakeHic({ mapLoaded: false });
+    const { send } = await joinedWith(fake);
+    const ack = await send({ type: 'loadTrack', requestId: 'l3', url: 'https://tracks.example/a.bw' });
+    expect(ack).toEqual({ type: 'ack', requestId: 'l3', ok: false, error: 'No map loaded' });
+    expect(fake.browser.loadTracks).not.toHaveBeenCalled();
+  });
+
+  it('removeTrack resolves by name, case-insensitively, and by 1-based index', async () => {
+    const [a, b] = [fakeTrackPair('CTCF'), fakeTrackPair('H3K27ac')];
+    const fake = fakeHic({ trackPairs: [a, b] });
+    const { send } = await joinedWith(fake);
+    expect((await send({ type: 'removeTrack', requestId: 'r1', track: 'ctcf' })).ok).toBe(true);
+    expect((await send({ type: 'removeTrack', requestId: 'r2', track: '2' })).ok).toBe(true);
+    expect(fake.browser.layoutController.removeTrackXYPair.mock.calls).toEqual([[a], [b]]);
+  });
+
+  it('setTrackColor sets an rgb colour, or resets it when none is given', async () => {
+    const tp = fakeTrackPair('CTCF');
+    const { send } = await joinedWith(fakeHic({ trackPairs: [tp] }));
+    await send({ type: 'setTrackColor', requestId: 'c1', track: 'CTCF', color: { r: 255, g: 0, b: 0 } });
+    await send({ type: 'setTrackColor', requestId: 'c2', track: '1' });
+    expect(tp.setColor.mock.calls).toEqual([['rgb(255,0,0)'], [undefined]]);
+  });
+
+  it('setTrackName relabels the track, and the track then resolves by its new name', async () => {
+    const tp = fakeTrackPair('CTCF');
+    const fake = fakeHic({ trackPairs: [tp] });
+    const { send } = await joinedWith(fake);
+    expect((await send({ type: 'setTrackName', requestId: 'n1', track: '1', name: 'CTCF rep1' })).ok).toBe(true);
+    expect(tp.setTrackLabelName).toHaveBeenCalledWith('CTCF rep1');
+    expect(tp.track.name).toBe('CTCF rep1');
+    expect((await send({ type: 'removeTrack', requestId: 'n2', track: 'ctcf rep1' })).ok).toBe(true);
+    expect(fake.browser.layoutController.removeTrackXYPair).toHaveBeenCalledWith(tp);
+  });
+
+  it('setTrackDataRange sets min and max', async () => {
+    const tp = fakeTrackPair('CTCF');
+    const { send } = await joinedWith(fakeHic({ trackPairs: [tp] }));
+    const ack = await send({ type: 'setTrackDataRange', requestId: 'd1', track: 'CTCF', min: 0, max: 10 });
+    expect(tp.setDataRange).toHaveBeenCalledWith(0, 10);
+    expect(ack.ok).toBe(true);
+  });
+
+  it('setTrackAutoscale / setTrackLogScale set the flag through the track pair', async () => {
+    const tp = fakeTrackPair('CTCF');
+    const { send } = await joinedWith(fakeHic({ trackPairs: [tp] }));
+    await send({ type: 'setTrackAutoscale', requestId: 'a1', track: 'CTCF', enabled: true });
+    await send({ type: 'setTrackLogScale', requestId: 'g1', track: '1', enabled: false });
+    expect(tp.setAutoscale).toHaveBeenCalledWith(true);
+    expect(tp.setLogScale).toHaveBeenCalledWith(false);
+  });
+
+  it.each([
+    ['an unknown name', 'nope'],
+    ['index 0', '0'],
+    ['an index past the last track', '4'],
+  ])('a track command naming %s acks ok:false and touches nothing', async (_, track) => {
+    const tp = fakeTrackPair('CTCF');
+    const fake = fakeHic({ trackPairs: [tp], tracks2D: [fakeTrack2D('loops')] });
+    const { send } = await joinedWith(fake);
+    const ack = await send({ type: 'removeTrack', requestId: 'u1', track });
+    expect(ack).toEqual({ type: 'ack', requestId: 'u1', ok: false, error: `Track not found: ${track}` });
+    const colorAck = await send({ type: 'setTrackColor', requestId: 'u2', track, color: { r: 1, g: 2, b: 3 } });
+    expect(colorAck.ok).toBe(false);
+    expect(fake.browser.layoutController.removeTrackXYPair).not.toHaveBeenCalled();
+    expect(tp.setColor).not.toHaveBeenCalled();
+  });
+
+  it('a track command naming a 2D track (by name or by an index past the track pairs) acks ok:false', async () => {
+    const fake = fakeHic({ trackPairs: [fakeTrackPair('CTCF')], tracks2D: [fakeTrack2D('loops')] });
+    const { send } = await joinedWith(fake);
+    for (const [requestId, track] of [['t1', 'loops'], ['t2', '2']]) {
+      const ack = await send({ type: 'removeTrack', requestId, track });
+      expect(ack.ok).toBe(false);
+      expect(ack.error).toMatch(/2D/);
+    }
+    expect(fake.browser.layoutController.removeTrackXYPair).not.toHaveBeenCalled();
+  });
+
+  it('a track command before any map is loaded acks ok:false', async () => {
+    const { send } = await joinedWith(fakeHic({ mapLoaded: false }));
+    const ack = await send({ type: 'removeTrack', requestId: 'm1', track: '1' });
+    expect(ack).toEqual({ type: 'ack', requestId: 'm1', ok: false, error: 'No map loaded' });
+  });
+});
+
+describe('attachRemote: §5.2 request-style commands', () => {
+  it('getTrackList returns the track pairs, then the 2D tracks, numbered from 1', async () => {
+    const fake = fakeHic({
+      trackPairs: [
+        fakeTrackPair('CTCF', { color: 'rgb(255,0,0)', dataRange: { min: 0, max: 10 }, autoscale: false, logScale: true }),
+        fakeTrackPair('H3K27ac', { dataRange: { min: 0, max: 3.5 }, autoscale: true, logScale: false }),
+      ],
+      tracks2D: [fakeTrack2D('loops', 'rgb(0,0,255)')],
+    });
+    const { send } = await joinedWith(fake);
+    const ack = await send({ type: 'getTrackList', requestId: 'g1' });
+    expect(ack).toEqual({
+      type: 'ack',
+      requestId: 'g1',
+      ok: true,
+      result: [
+        {
+          index: 1,
+          is2D: false,
+          name: 'CTCF',
+          url: 'https://tracks.example/CTCF.bw',
+          color: 'rgb(255,0,0)',
+          dataRange: { min: 0, max: 10 },
+          autoscale: false,
+          logScale: true,
+        },
+        {
+          index: 2,
+          is2D: false,
+          name: 'H3K27ac',
+          url: 'https://tracks.example/H3K27ac.bw',
+          dataRange: { min: 0, max: 3.5 },
+          autoscale: true,
+          logScale: false,
+        },
+        { index: 3, is2D: true, name: 'loops', url: 'https://tracks.example/loops.bedpe', color: 'rgb(0,0,255)' },
+      ],
+    });
+  });
+
+  it('getTrackList lists a still-loading track by its name and url', async () => {
+    const pending = { isPendingTrack: true, config: { url: 'https://tracks.example/slow.bw' }, track: { name: 'slow' } };
+    const { send } = await joinedWith(fakeHic({ trackPairs: [pending] }));
+    const ack = await send({ type: 'getTrackList', requestId: 'g3' });
+    expect(ack.result).toEqual([{ index: 1, is2D: false, name: 'slow', url: 'https://tracks.example/slow.bw' }]);
+  });
+
+  it('getTrackList with no tracks returns an empty list', async () => {
+    const { send } = await joinedWith(fakeHic());
+    expect(await send({ type: 'getTrackList', requestId: 'g2' })).toEqual({
+      type: 'ack',
+      requestId: 'g2',
+      ok: true,
+      result: [],
+    });
+  });
+
+  it('getSession returns hic.toJSON() as the result', async () => {
+    const fake = fakeHic();
+    const { send } = await joinedWith(fake);
+    const ack = await send({ type: 'getSession', requestId: 's1' });
+    expect(ack).toEqual({ type: 'ack', requestId: 's1', ok: true, result: fake.toJSON.mock.results[0].value });
+  });
+
+  it('getCompressedSession returns hic.compressedSession() as the result', async () => {
+    const { send } = await joinedWith(fakeHic());
+    expect(await send({ type: 'getCompressedSession', requestId: 's2' })).toEqual({
+      type: 'ack',
+      requestId: 's2',
+      ok: true,
+      result: 'session=blob:abc123',
+    });
+  });
+
+  it('a session read that throws acks ok:false with its message and no result', async () => {
+    const fake = fakeHic();
+    fake.toJSON.mockImplementation(() => {
+      throw new Error('no registry');
+    });
+    const { send } = await joinedWith(fake);
+    expect(await send({ type: 'getSession', requestId: 's3' })).toEqual({
+      type: 'ack',
+      requestId: 's3',
+      ok: false,
+      error: 'no registry',
+    });
   });
 });

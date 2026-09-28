@@ -90,8 +90,9 @@ export function attachRemote({ hic, container, url, room, onStatus, onToolCall, 
     if (client.stopped) return;
     const ack = { type: MessageType.ACK, requestId: command.requestId };
     try {
-      await applyCommand(hic, container, command);
+      const result = await applyCommand(hic, container, command);
       ack.ok = true;
+      if (result !== undefined) ack.result = result; // request-style commands (getSession, …)
     } catch (e) {
       ack.ok = false;
       ack.error = e instanceof Error ? e.message : String(e);
