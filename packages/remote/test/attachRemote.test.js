@@ -75,6 +75,9 @@ function fakeHic({ mapLoaded = true, trackPairs = [], tracks2D = [] } = {}) {
     tracks2D,
     loadTracks: vi.fn(() => new Promise(() => {})), // a track load that never finishes
     layoutController: { removeTrackXYPair: vi.fn() },
+    removeTrack2D: vi.fn(),
+    setTrack2DColor: vi.fn(),
+    setTrack2DName: vi.fn((track2D, name) => (track2D.name = name)),
   };
   return {
     EventBus: { globalBus: { subscribe() {}, unsubscribe() {} } },
@@ -87,16 +90,31 @@ function fakeHic({ mapLoaded = true, trackPairs = [], tracks2D = [] } = {}) {
   };
 }
 
-/** A 1D track pair: `track` carries the look, the setters are spies. */
+/**
+ * A 1D track pair: `track` carries the look, the setters are spies. Setting
+ * `track.name` relabels the row, as igv's TrackBase setter does.
+ */
 function fakeTrackPair(name, look = {}) {
-  return {
-    track: { name, config: { url: `https://tracks.example/${name}.bw` }, ...look },
+  const trackPair = {
+    track: {
+      _name: name,
+      get name() {
+        return this._name;
+      },
+      set name(n) {
+        this._name = n;
+        trackPair.setTrackLabelName(n);
+      },
+      config: { url: `https://tracks.example/${name}.bw` },
+      ...look,
+    },
     setColor: vi.fn(),
     setTrackLabelName: vi.fn(),
     setDataRange: vi.fn(),
     setAutoscale: vi.fn(),
     setLogScale: vi.fn(),
   };
+  return trackPair;
 }
 
 const fakeTrack2D = (name, color) => ({ name, color, config: { url: `https://tracks.example/${name}.bedpe` } });
@@ -583,7 +601,8 @@ describe('attachRemote: §5.2 track command rows', () => {
     const fake = fakeHic({ trackPairs: [tp] });
     const { send } = await joinedWith(fake);
     expect((await send({ type: 'setTrackName', requestId: 'n1', track: '1', name: 'CTCF rep1' })).ok).toBe(true);
-    expect(tp.setTrackLabelName).toHaveBeenCalledWith('CTCF rep1');
+    expect(tp.track.name).toBe('CTCF rep1');
+    expect(tp.setTrackLabelName.mock.calls).toEqual([['CTCF rep1']]); // once: through the name setter only
     expect(tp.track.name).toBe('CTCF rep1');
     expect((await send({ type: 'removeTrack', requestId: 'n2', track: 'ctcf rep1' })).ok).toBe(true);
     expect(fake.browser.layoutController.removeTrackXYPair).toHaveBeenCalledWith(tp);
@@ -622,16 +641,53 @@ describe('attachRemote: §5.2 track command rows', () => {
     expect(tp.setColor).not.toHaveBeenCalled();
   });
 
-  it('a track command naming a 2D track (by name or by an index past the track pairs) acks ok:false', async () => {
-    const fake = fakeHic({ trackPairs: [fakeTrackPair('CTCF')], tracks2D: [fakeTrack2D('loops')] });
+  it('removeTrack on a 2D track, by name or by an index past the track pairs, removes it through the browser', async () => {
+    const [loops, domains] = [fakeTrack2D('loops'), fakeTrack2D('domains')];
+    const fake = fakeHic({ trackPairs: [fakeTrackPair('CTCF')], tracks2D: [loops, domains] });
     const { send } = await joinedWith(fake);
-    for (const [requestId, track] of [['t1', 'loops'], ['t2', '2']]) {
-      const ack = await send({ type: 'removeTrack', requestId, track });
-      expect(ack.ok).toBe(false);
-      expect(ack.error).toMatch(/2D/);
-    }
+    expect((await send({ type: 'removeTrack', requestId: 't1', track: 'LOOPS' })).ok).toBe(true);
+    expect((await send({ type: 'removeTrack', requestId: 't2', track: '3' })).ok).toBe(true);
+    expect(fake.browser.removeTrack2D.mock.calls).toEqual([[loops], [domains]]);
     expect(fake.browser.layoutController.removeTrackXYPair).not.toHaveBeenCalled();
   });
+
+  it('setTrackColor on a 2D track sets an rgb colour, or gives back the features’ own when none is given', async () => {
+    const loops = fakeTrack2D('loops');
+    const fake = fakeHic({ tracks2D: [loops] });
+    const { send } = await joinedWith(fake);
+    expect((await send({ type: 'setTrackColor', requestId: 'c1', track: 'loops', color: { r: 0, g: 0, b: 255 } })).ok).toBe(true);
+    expect((await send({ type: 'setTrackColor', requestId: 'c2', track: '1' })).ok).toBe(true);
+    expect(fake.browser.setTrack2DColor.mock.calls).toEqual([
+      [loops, 'rgb(0,0,255)'],
+      [loops, undefined],
+    ]);
+  });
+
+  it('setTrackName on a 2D track renames it, and getTrackList then shows the new name', async () => {
+    const loops = fakeTrack2D('loops', 'rgb(0,0,255)');
+    const fake = fakeHic({ trackPairs: [fakeTrackPair('CTCF')], tracks2D: [loops] });
+    const { send } = await joinedWith(fake);
+    expect((await send({ type: 'setTrackName', requestId: 'n1', track: '2', name: 'HiCCUPS loops' })).ok).toBe(true);
+    expect(fake.browser.setTrack2DName).toHaveBeenCalledWith(loops, 'HiCCUPS loops');
+    const { result } = await send({ type: 'getTrackList', requestId: 'n2' });
+    expect(result[1]).toMatchObject({ index: 2, is2D: true, name: 'HiCCUPS loops' });
+    expect((await send({ type: 'removeTrack', requestId: 'n3', track: 'hiccups loops' })).ok).toBe(true);
+    expect(fake.browser.removeTrack2D).toHaveBeenCalledWith(loops);
+  });
+
+  it.each(['setTrackDataRange', 'setTrackAutoscale', 'setTrackLogScale'])(
+    '%s on a 2D track acks ok:false: it does not apply',
+    async (type) => {
+      const { send } = await joinedWith(fakeHic({ tracks2D: [fakeTrack2D('loops')] }));
+      const ack = await send({ type, requestId: 'x1', track: 'loops', min: 0, max: 1, enabled: true });
+      expect(ack).toEqual({
+        type: 'ack',
+        requestId: 'x1',
+        ok: false,
+        error: `Track loops is a 2D track; ${type} does not apply to 2D tracks`,
+      });
+    },
+  );
 
   it('a track command before any map is loaded acks ok:false', async () => {
     const { send } = await joinedWith(fakeHic({ mapLoaded: false }));

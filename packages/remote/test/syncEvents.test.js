@@ -61,11 +61,22 @@ function fakeBus() {
   };
 }
 
-// A track pair whose setters post TrackXYPairChange, as juicebox.js's do.
+// A track pair whose setters post TrackXYPairChange, as juicebox.js's do. Setting
+// `track.name` relabels the row, as igv's TrackBase setter does: the name first.
 function fakeTrackPair(bus, config) {
   const change = (property, value) => bus.post('TrackXYPairChange', { trackPair, property, value });
+  let name = config.name;
   const trackPair = {
-    track: { name: config.name, config },
+    track: {
+      get name() {
+        return name;
+      },
+      set name(n) {
+        name = n;
+        trackPair.setTrackLabelName(n);
+      },
+      config,
+    },
     setColor: vi.fn((color) => change('color', color)),
     setTrackLabelName: vi.fn((name) => change('name', name)),
     setDataRange: vi.fn((min, max) => change('dataRange', { min, max })),
@@ -74,6 +85,9 @@ function fakeTrackPair(bus, config) {
   };
   return trackPair;
 }
+
+const fakeTrack2D = (config) => ({ name: config.name, config });
+const is2D = ({ url }) => url.endsWith('.bedpe');
 
 const tick = () => Promise.resolve();
 
@@ -93,6 +107,7 @@ function fakeBrowser(bus) {
     colorScale,
     dataset: { url: 'https://maps.example/a.hic', name: 'A' },
     trackPairs: [],
+    tracks2D: [],
     getSyncState: vi.fn(() => ({ chr1Name: 'chr1', chr2Name: 'chr1', binSize: 5000, binX: 10, binY: 10 })),
     syncState: vi.fn(async (state) => {
       await tick();
@@ -121,10 +136,30 @@ function fakeBrowser(bus) {
     loadTracks: vi.fn(async (configs) => {
       await tick();
       for (const config of configs) {
-        const trackPair = fakeTrackPair(bus, config);
-        browser.trackPairs.push(trackPair);
-        bus.post('TrackXYPairLoad', trackPair);
+        if (is2D(config)) {
+          const track2D = fakeTrack2D(config);
+          browser.tracks2D = [...browser.tracks2D, track2D];
+          bus.post('Track2DLoad', track2D);
+        } else {
+          const trackPair = fakeTrackPair(bus, config);
+          browser.trackPairs.push(trackPair);
+          bus.post('TrackXYPairLoad', trackPair);
+        }
       }
+    }),
+    // As juicebox.js's: the name or colour is set before the change is posted.
+    removeTrack2D: vi.fn((track2D) => {
+      if (!browser.tracks2D.includes(track2D)) return;
+      browser.tracks2D = browser.tracks2D.filter((t) => t !== track2D);
+      bus.post('Track2DRemoval', track2D);
+    }),
+    setTrack2DColor: vi.fn((track2D, color) => {
+      track2D.color = color;
+      bus.post('Track2DChange', { track2D, property: 'color', value: color });
+    }),
+    setTrack2DName: vi.fn((track2D, name) => {
+      track2D.name = name;
+      bus.post('Track2DChange', { track2D, property: 'name', value: name });
     }),
     parseGotoInput: vi.fn(async () => {
       await tick();
@@ -154,6 +189,11 @@ function fakeHic() {
       const trackPair = fakeTrackPair(bus, config);
       hic.current.trackPairs.push(trackPair);
       return trackPair;
+    },
+    addTrack2D: (config) => {
+      const track2D = fakeTrack2D(config);
+      hic.current.tracks2D.push(track2D);
+      return track2D;
     },
   };
   return hic;
@@ -336,6 +376,72 @@ describe('sync events: §5.3 EventBus track events', () => {
   });
 });
 
+describe('sync events: §5.3 EventBus 2D-track events', () => {
+  const config = { url: 'https://tracks.example/loops.bedpe', name: 'loops' };
+
+  it('Track2DLoad → trackLoad {configs}', async () => {
+    const hic = fakeHic();
+    const { socket } = await joined(hic);
+    hic.bus.post('Track2DLoad', fakeTrack2D(config));
+    await settle();
+    expect(syncEventsOf(socket)).toEqual([{ type: 'syncEvent', syncType: 'trackLoad', configs: [config] }]);
+  });
+
+  it('a 2D track opened from a local file (no url) is not sent', async () => {
+    const hic = fakeHic();
+    const { socket } = await joined(hic);
+    hic.bus.post('Track2DLoad', fakeTrack2D({ name: 'local.bedpe' }));
+    await settle();
+    expect(syncEventsOf(socket)).toEqual([]);
+  });
+
+  it('Track2DRemoval → trackRemove {track}', async () => {
+    const hic = fakeHic();
+    const { socket } = await joined(hic);
+    hic.bus.post('Track2DRemoval', fakeTrack2D(config));
+    await settle();
+    expect(syncEventsOf(socket)).toEqual([{ type: 'syncEvent', syncType: 'trackRemove', track: 'loops' }]);
+  });
+
+  it.each([
+    ['color', 'rgb(0,0,255)', { syncType: 'trackColorChange', colorString: 'rgb(0,0,255)' }],
+    ['color', undefined, { syncType: 'trackColorChange' }], // the features' own colours back
+    ['name', 'HiCCUPS loops', { syncType: 'trackNameChange', name: 'HiCCUPS loops' }],
+  ])('Track2DChange %s %s → one sync event naming the track', async (property, value, expected) => {
+    const hic = fakeHic();
+    const track2D = hic.addTrack2D(config);
+    const { socket } = await joined(hic);
+    if (property === 'color') hic.current.setTrack2DColor(track2D, value);
+    else hic.current.setTrack2DName(track2D, value);
+    await settle();
+    expect(syncEventsOf(socket)).toEqual([{ type: 'syncEvent', track: 'loops', ...expected }]);
+  });
+
+  it('after a rename, the 2D track is named by its new name', async () => {
+    const hic = fakeHic();
+    const track2D = hic.addTrack2D(config);
+    const { socket } = await joined(hic);
+    hic.current.setTrack2DName(track2D, 'HiCCUPS loops');
+    hic.current.setTrack2DColor(track2D, 'red');
+    hic.current.removeTrack2D(track2D);
+    await settle();
+    expect(syncEventsOf(socket).map(({ syncType, track }) => [syncType, track])).toEqual([
+      ['trackNameChange', 'loops'],
+      ['trackColorChange', 'HiCCUPS loops'],
+      ['trackRemove', 'HiCCUPS loops'],
+    ]);
+  });
+
+  it('a track pair on the panel before attach, renamed by hand, is named by its old name', async () => {
+    const hic = fakeHic();
+    const trackPair = hic.addTrack({ url: 'https://tracks.example/k27.bw', name: 'H3K27ac' });
+    const { socket } = await joined(hic);
+    trackPair.track.name = 'K27'; // the track menu's rename
+    await settle();
+    expect(syncEventsOf(socket)).toEqual([{ type: 'syncEvent', syncType: 'trackNameChange', track: 'H3K27ac', name: 'K27' }]);
+  });
+});
+
 describe('sync events: applying a peer’s sync event', () => {
   const syncState = { chr1Name: 'chr2', chr2Name: 'chr2', binSize: 25000, binX: 3, binY: 4 };
   const trackConfig = { url: 'https://tracks.example/ctcf.bw', name: 'CTCF' };
@@ -379,8 +485,8 @@ describe('sync events: applying a peer’s sync event', () => {
       'trackNameChange',
       { track: 'H3K27ac', name: 'H3K27ac rep2' },
       (b, tp) => {
-        expect(tp.setTrackLabelName).toHaveBeenCalledWith('H3K27ac rep2');
         expect(tp.track.name).toBe('H3K27ac rep2');
+        expect(tp.setTrackLabelName.mock.calls).toEqual([['H3K27ac rep2']]); // once: through the name setter only
       },
     ],
     [
@@ -533,6 +639,123 @@ describe('sync events: a track this page already has', () => {
   });
 });
 
+describe('sync events: applying a peer’s sync event to a 2D track', () => {
+  const loops = { url: 'https://tracks.example/loops.bedpe', name: 'loops' };
+
+  it.each([
+    ['trackRemove', { track: 'loops' }, (b, t) => expect(b.removeTrack2D).toHaveBeenCalledWith(t)],
+    [
+      'trackColorChange',
+      { track: 'loops', colorString: 'rgb(0,255,0)' },
+      (b, t) => expect(b.setTrack2DColor).toHaveBeenCalledWith(t, 'rgb(0,255,0)'),
+    ],
+    [
+      'trackNameChange',
+      { track: 'loops', name: 'HiCCUPS loops' },
+      (b, t) => expect(b.setTrack2DName).toHaveBeenCalledWith(t, 'HiCCUPS loops'),
+    ],
+  ])('%s calls the browser’s 2D-track member and sends no sync event back', async (syncType, payload, check) => {
+    const hic = fakeHic();
+    const track2D = hic.addTrack2D(loops);
+    const { socket } = await joined(hic);
+    socket.receive({ type: 'syncEvent', syncType, ...payload });
+    await settle();
+    check(hic.current, track2D);
+    expect(syncEventsOf(socket)).toEqual([]);
+  });
+
+  it('trackLoad of a 2D track loads it and sends no sync event back', async () => {
+    const hic = fakeHic();
+    const { socket } = await joined(hic);
+    socket.receive({ type: 'syncEvent', syncType: 'trackLoad', configs: [loops] });
+    await settle();
+    expect(hic.current.tracks2D.map((t) => t.config)).toEqual([loops]);
+    expect(syncEventsOf(socket)).toEqual([]);
+  });
+
+  it('a renamed 2D track is found by its new name afterwards', async () => {
+    const hic = fakeHic();
+    const track2D = hic.addTrack2D(loops);
+    const { socket } = await joined(hic);
+    socket.receive({ type: 'syncEvent', syncType: 'trackNameChange', track: 'loops', name: 'L' });
+    socket.receive({ type: 'syncEvent', syncType: 'trackColorChange', track: 'L', colorString: 'red' });
+    await settle();
+    expect(hic.current.setTrack2DColor).toHaveBeenCalledWith(track2D, 'red');
+  });
+
+  it('a track pair named like a 2D track is the one a peer’s sync event reaches', async () => {
+    const hic = fakeHic();
+    const trackPair = hic.addTrack({ url: 'https://tracks.example/loops.bw', name: 'loops' });
+    hic.addTrack2D(loops);
+    const { socket } = await joined(hic);
+    socket.receive({ type: 'syncEvent', syncType: 'trackColorChange', track: 'loops', colorString: 'red' });
+    await settle();
+    expect(trackPair.setColor).toHaveBeenCalledWith('red');
+    expect(hic.current.setTrack2DColor).not.toHaveBeenCalled();
+  });
+
+  it('a 1D-only sync event (data range) naming a 2D track is dropped', async () => {
+    const hic = fakeHic();
+    hic.addTrack2D(loops);
+    const { socket } = await joined(hic);
+    socket.receive({ type: 'syncEvent', syncType: 'trackDataRangeChange', track: 'loops', min: 0, max: 1 });
+    socket.receive({ type: 'syncEvent', syncType: 'normalizationChange', normalization: 'KR' });
+    await settle();
+    expect(hic.current.setNormalization).toHaveBeenCalledWith('KR');
+  });
+});
+
+// A 2D track has no pending row, so a peer's trackLoad can arrive while this page's own
+// load of the same track (from a loadTrack command or a restored session) is in flight.
+describe('sync events: a 2D track this page already has', () => {
+  const loops = { url: 'https://tracks.example/loops.bedpe', name: 'loops' };
+
+  it('a trackLoad for the url of a loaded 2D track does not load it again', async () => {
+    const hic = fakeHic();
+    hic.addTrack2D(loops);
+    const { socket } = await joined(hic);
+    socket.receive({ type: 'syncEvent', syncType: 'trackLoad', configs: [loops] });
+    await settle();
+    expect(hic.current.loadTracks).not.toHaveBeenCalled();
+  });
+
+  it('the second copy to arrive is removed, and peers hear of neither it nor its removal', async () => {
+    const hic = fakeHic();
+    const { current } = hic;
+    let finishOwnLoad;
+    current.loadTracks.mockImplementationOnce(async (configs) => {
+      await new Promise((resolve) => (finishOwnLoad = resolve));
+      for (const config of configs) {
+        const track2D = fakeTrack2D(config);
+        current.tracks2D = [...current.tracks2D, track2D];
+        hic.bus.post('Track2DLoad', track2D);
+      }
+    });
+    const { socket } = await joined(hic);
+    socket.receive({ type: 'loadTrack', requestId: 'c1', url: loops.url, name: 'loops' });
+    socket.receive({ type: 'syncEvent', syncType: 'trackLoad', configs: [loops] }); // the peer's finished first
+    await settle();
+    expect(current.tracks2D).toHaveLength(1);
+    const first = current.tracks2D[0];
+    finishOwnLoad();
+    await settle();
+    expect(current.tracks2D).toEqual([first]);
+    expect(current.removeTrack2D).toHaveBeenCalledTimes(1);
+    expect(syncEventsOf(socket)).toEqual([]);
+  });
+
+  it('a second 2D track loaded by hand with another url is sent as usual', async () => {
+    const hic = fakeHic();
+    hic.addTrack2D(loops);
+    const { socket } = await joined(hic);
+    const domains = { url: 'https://tracks.example/domains.bedpe', name: 'domains' };
+    await hic.current.loadTracks([domains]);
+    await settle();
+    expect(hic.current.removeTrack2D).not.toHaveBeenCalled();
+    expect(syncEventsOf(socket)).toEqual([{ type: 'syncEvent', syncType: 'trackLoad', configs: [domains] }]);
+  });
+});
+
 describe('sync events: locus rate limiting', () => {
   const locusEvents = (socket) => syncEventsOf(socket).filter((m) => m.syncType === 'locusChange');
 
@@ -613,7 +836,7 @@ describe('sync events: detach', () => {
     const hic = fakeHic();
     const { remote } = await joined(hic);
     expect(hic.current.coordinator.count()).toBe(9);
-    expect(hic.bus.count()).toBe(4); // BrowserSelect + three track events
+    expect(hic.bus.count()).toBe(7); // BrowserSelect + three track-pair events + three 2D-track events
     remote.detach();
     expect(hic.current.coordinator.count()).toBe(0);
     expect(hic.bus.count()).toBe(0);
