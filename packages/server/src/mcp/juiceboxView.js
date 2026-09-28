@@ -13,8 +13,10 @@ export const VIEW_MIME_TYPE = 'text/html;profile=mcp-app';
 /** Client bundle the view loads, as in Claude's no-build MCP Apps quickstart. */
 const APP_CLIENT = 'https://unpkg.com/@modelcontextprotocol/ext-apps@1.7.5/dist/src/app-with-deps.js';
 
-/** `_meta.ui` for the resource: the sandbox may load the client; the QR is a data: image. */
-export const VIEW_META = { ui: { csp: { resourceDomains: [new URL(APP_CLIENT).origin] } } };
+/** `_meta.ui` for the resource: the sandbox may load the client and frame the page; the QR is a data: image. */
+export function viewMeta(browserUrl) {
+  return { ui: { csp: { resourceDomains: [new URL(APP_CLIENT).origin], frameDomains: [new URL(browserUrl).origin] } } };
+}
 
 /** `_meta` for the tool: the current key and the flat one older hosts read. */
 export const TOOL_META = { ui: { resourceUri: VIEW_URI }, 'ui/resourceUri': VIEW_URI };
@@ -29,6 +31,7 @@ export const VIEW_HTML = `<!DOCTYPE html>
   button { align-self: flex-start; padding: 6px 12px; }
 </style></head>
 <body>
+<iframe id="probe" title="probe" width="1" height="1" style="position:absolute;left:-9999px;border:0"></iframe>
 <img id="qr" alt="QR code of the join link" hidden>
 <div id="text">
   <div id="status">Waiting for the join link…</div>
@@ -54,7 +57,7 @@ export const VIEW_HTML = `<!DOCTYPE html>
     $("link").textContent = joinUrl; $("link").href = joinUrl; $("link").hidden = false;
     $("open").hidden = false;
     if (sc?.qrPng) { $("qr").src = "data:image/png;base64," + sc.qrPng; $("qr").hidden = false; $("hint").hidden = false; }
-    open(); // trial: ask the host to open the page without a click (ticket 23)
+    $("probe").src = joinUrl; // trial (ticket 23): a blocked frame once made Claude open its browser pane
   };
   $("link").onclick = open;
   $("open").onclick = open;

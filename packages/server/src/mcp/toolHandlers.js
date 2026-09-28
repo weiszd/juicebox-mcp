@@ -12,7 +12,7 @@ import { parseDataSource } from '../search/dataParsers.js';
 import { filterMaps } from '../search/mapFilter.js';
 import { formatSearchResults, formatSearchResultsJSON } from '../search/resultFormatter.js';
 import { generateQRPng } from '../qrPng.js';
-import { VIEW_URI, VIEW_HTML, VIEW_META, VIEW_MIME_TYPE, TOOL_META } from './juiceboxView.js';
+import { VIEW_URI, VIEW_HTML, viewMeta, VIEW_MIME_TYPE, TOOL_META } from './juiceboxView.js';
 
 // Helper function to convert hex color to RGB
 function hexToRgb(hex) {
@@ -110,7 +110,7 @@ export function registerTools(mcpServer, deps) {
     'Juicebox join card',
     VIEW_URI,
     { description: 'MCP App view for get_juicebox_url: the join link and its QR code', mimeType: VIEW_MIME_TYPE },
-    async (uri) => ({ contents: [{ uri: uri.href, mimeType: VIEW_MIME_TYPE, text: VIEW_HTML, _meta: VIEW_META }] })
+    async (uri) => ({ contents: [{ uri: uri.href, mimeType: VIEW_MIME_TYPE, text: VIEW_HTML, _meta: viewMeta(browserUrl) }] })
   );
   // --- Tool: load_map ---
   mcpServer.registerTool(

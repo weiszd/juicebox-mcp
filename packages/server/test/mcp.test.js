@@ -289,11 +289,9 @@ describe('join link and join_room', () => {
 
     const view = (await (await rpc('resources/read', { uri: 'ui://juicebox/join' }, { 'mcp-session-id': session })).json()).result.contents[0];
     expect(view.mimeType).toBe('text/html;profile=mcp-app');
-    expect(view.text).not.toContain('<iframe'); // Claude's sandbox forbids framing other origins
-    expect(view._meta.ui.csp.frameDomains).toBeUndefined();
-
     const result = await callTool(session, 'get_juicebox_url');
     const link = text(result).match(/https?:\/\/\S+/)[0];
+    expect(view._meta.ui.csp.frameDomains).toEqual([new URL(link).origin]); // trial probe frame, ticket 23
     expect(result.content.find((c) => c.type === 'image')).toBeUndefined(); // the QR is the view's, not a file
     expect(result.structuredContent).toMatchObject({ room: session, joinUrl: link });
     expect(await decodeQrPng(result.structuredContent.qrPng)).toBe(link);
