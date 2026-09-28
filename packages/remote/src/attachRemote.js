@@ -1,6 +1,7 @@
 import { WebSocketClient } from './WebSocketClient.js';
-import { MessageType, ErrorCode } from './protocol.js';
+import { MessageType, ErrorCode, isSyncEvent } from './protocol.js';
 import { applyCommand } from './applyCommand.js';
+import { observe } from './observe.js';
 
 const messageTypes = new Set(Object.values(MessageType));
 
@@ -53,6 +54,8 @@ export function attachRemote({ hic, container, url, room, onStatus, onToolCall, 
     onClose: () => setStatus(Status.CLOSED),
   });
 
+  const observer = observe(hic, (msg) => client.send(msg));
+
   function handleMessage(msg) {
     if (typeof msg !== 'object' || msg === null) return;
     switch (msg.type) {
@@ -65,6 +68,7 @@ export function attachRemote({ hic, container, url, room, onStatus, onToolCall, 
       case MessageType.ERROR:
         if (msg.code === ErrorCode.ROOM_EXPIRED) {
           client.close(); // an expired room never comes back; the host starts a new one
+          observer.detach();
           joinedRoom = joinUrl = undefined;
           setStatus(Status.EXPIRED);
         }
@@ -72,25 +76,29 @@ export function attachRemote({ hic, container, url, room, onStatus, onToolCall, 
       case MessageType.TOOL_CALL:
         if (typeof msg.name === 'string') onToolCall?.(msg.name);
         return;
+      case MessageType.SYNC_EVENT:
+        if (isSyncEvent(msg)) enqueue(() => observer.apply(msg));
+        return;
       default:
         // Anything else carrying a requestId is a command; an unknown type is acked as a failure.
-        if (typeof msg.requestId === 'string' && !messageTypes.has(msg.type)) enqueue(msg);
-        return; // sync events and catch-up land in later tickets
+        if (typeof msg.requestId === 'string' && !messageTypes.has(msg.type)) enqueue(() => run(msg));
+        return; // catch-up lands in a later ticket
     }
   }
 
-  // Commands apply one at a time in arrival order, so a gotoLocus sent after a
-  // loadMap runs against the loaded map.
+  // Commands and peers' sync events apply one at a time in arrival order, so a
+  // gotoLocus sent after a loadMap runs against the loaded map.
   let applying = Promise.resolve();
-  function enqueue(command) {
-    applying = applying.then(() => run(command));
+  function enqueue(task) {
+    applying = applying.then(task);
   }
 
   async function run(command) {
     if (client.stopped) return;
     const ack = { type: MessageType.ACK, requestId: command.requestId };
     try {
-      await applyCommand(hic, container, command);
+      // Every page in the room gets the command, so what it changes is not sent as a sync event.
+      await observer.guard(() => applyCommand(hic, container, command));
       ack.ok = true;
     } catch (e) {
       ack.ok = false;
@@ -111,6 +119,7 @@ export function attachRemote({ hic, container, url, room, onStatus, onToolCall, 
     },
     detach() {
       if (client.stopped) return; // already detached, or expired (which never reports closed)
+      observer.detach();
       client.close();
       setStatus(Status.CLOSED);
     },
