@@ -907,7 +907,7 @@ Just ask:
         const resultText = `${formattedTable}\n\n[Structured data for programmatic access]\n${jsonResults}`;
         return { content: [{ type: 'text', text: resultText }] };
       } catch (error) {
-        log.logError('Error in search_maps tool:', error);
+        log.logError('Error in search_map_catalogs tool:', error);
         return { content: [{ type: 'text', text: `Error searching maps: ${error.message}` }], isError: true };
       }
     }

@@ -231,7 +231,7 @@ secret_is_set() { local out; out=$(wrangler secret list 2>/dev/null || true); [[
 drive_map_load() {
   step "In a new chat, ask: \"Give me the Juicebox join link.\" (get_juicebox_url)"
   step "Open the link ($PAGE_BASE?room=…). The room widget's indicator should reach 'open'."
-  step "Ask: \"Search 4DN for an HFFc6 in situ Hi-C map and load it.\" (search_maps → load_map)"
+  step "Ask: \"Search 4DN for an HFFc6 in situ Hi-C map and load it.\" (search_map_catalogs → load_map)"
   step "Ask: \"Go to chr8:127,000,000-130,000,000.\" (goto_locus). A toast names each tool."
 }
 
