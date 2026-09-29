@@ -45,7 +45,7 @@ describe('protocol: catalogue', () => {
   it('names every §5.2 command', () => {
     expect(Object.values(CommandType).sort()).toEqual(
       [
-        'loadMap', 'loadControlMap', 'loadSession', 'gotoLocus', 'zoomIn', 'zoomOut',
+        'loadMap', 'loadControlMap', 'closePanel', 'loadSession', 'gotoLocus', 'zoomIn', 'zoomOut',
         'setForegroundColor', 'setBackgroundColor', 'setColorScale', 'setNormalization',
         'loadTrack', 'getTrackList', 'getPanelList', 'removeTrack', 'setTrackColor', 'setTrackName',
         'setTrackDataRange', 'setTrackAutoscale', 'setTrackLogScale',

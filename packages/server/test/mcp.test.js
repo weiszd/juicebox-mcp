@@ -132,7 +132,7 @@ describe('tools/list', () => {
     const res = await rpc('tools/list', {}, { 'mcp-session-id': await newSession() });
     const { tools } = (await res.json()).result;
 
-    expect(tools).toHaveLength(31);
+    expect(tools).toHaveLength(32);
     const byName = Object.fromEntries(tools.map((t) => [t.name, t.inputSchema]));
     for (const { name, inputSchema } of prototypeTools) {
       expect(byName[name], name).toEqual(inputSchema);

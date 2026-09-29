@@ -22,12 +22,16 @@
           "description": "Optional genomic locus (e.g., \"1:1000000-2000000 1:1000000-2000000\")"
         },
         "panel": {
-          "type": "string",
-          "enum": [
-            "current",
-            "new"
+          "anyOf": [
+            {
+              "type": "integer",
+              "exclusiveMinimum": 0
+            },
+            {
+              "type": "string"
+            }
           ],
-          "description": "\"new\" opens another map panel next to the existing one and loads there (side-by-side comparisons). Default: the current panel"
+          "description": "panel: \"new\" opens another panel beside the others and loads there (side-by-side comparisons); a position from the left (1, 2, ...) or a map name replaces that panel's map, no \"all\"; required when more than one panel is open"
         }
       },
       "required": [
@@ -71,6 +75,28 @@
       "required": [
         "url"
       ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    }
+  },
+  {
+    "name": "close_panel",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "panel": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "exclusiveMinimum": 0
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "description": "panel: position from the left (1, 2, ...) or a map name, no \"all\"; required when more than one panel is open"
+        }
+      },
       "additionalProperties": false,
       "$schema": "http://json-schema.org/draft-07/schema#"
     }

@@ -22,14 +22,21 @@ export async function applyCommand(hic, container, command) {
 const appliers = {
   [CommandType.LOAD_MAP]: async ({ url, name, normalization, locus, panel }, { hic, container }) => {
     // PROTOTYPE (proto/encode-portal-search): panel 'new' opens another viewer beside the
-    // current one, the way juicebox-web's clone button does, and loads the map there.
-    let browser = currentBrowser(hic);
+    // current one, the way juicebox-web's clone button does, and loads the map there;
+    // otherwise the addressed panel's map is replaced.
+    let browser;
     if (panel === 'new') {
-      const { width, height } = browser.config;
+      const { width, height } = currentBrowser(hic).config;
       browser = await hic.createBrowser(container, { width, height });
       hic.setCurrentBrowser(browser);
+    } else {
+      browser = onePanel(hic, panel, 'load_map');
     }
     await browser.loadHicFile({ url, name, normalization, locus });
+    // After applying config.locus juicebox.js adopts a compatible peer's view; put the asked-for locus back.
+    if (locus) await browser.parseGotoInput(locus);
+    const browsers = hic.getAllBrowsers();
+    return `loaded ${browser.dataset?.name ?? url} into panel ${browsers.indexOf(browser) + 1} of ${browsers.length} (${datasetLabel(browser)})`;
   },
 
   [CommandType.LOAD_CONTROL_MAP]: async ({ url, name, normalization, panel }, { hic }) => {
@@ -39,6 +46,16 @@ const appliers = {
       await browser.setDisplayMode('AOB');
     }
     return `${panelLabel(hic, browser)}: ok`;
+  },
+
+  [CommandType.CLOSE_PANEL]: async ({ panel }, { hic }) => {
+    const browser = onePanel(hic, panel, 'close_panel');
+    if (hic.getAllBrowsers().length === 1) throw new Error('cannot close the last panel');
+    const closed = panelLabel(hic, browser);
+    // What juicebox.js's own deleteBrowser does (not on the 4.7.0 namespace).
+    browser.registry.delete(browser);
+    const remaining = hic.getAllBrowsers().map((b, i) => `${i + 1} (${datasetLabel(b)})`);
+    return `closed ${closed}; remaining: ${remaining.join(' | ')}`;
   },
 
   [CommandType.LOAD_SESSION]: async ({ sessionData }, { hic, container }) => {

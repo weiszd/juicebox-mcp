@@ -123,17 +123,30 @@ export function registerTools(mcpServer, deps) {
     'load_map',
     {
       title: 'Load Map',
-      description: 'Load a Hi-C contact map (.hic file) into Juicebox. With panel "new" the map opens in an additional panel beside the current one (side by side); by default it replaces the map in the current panel.',
+      description: 'Load a Hi-C contact map (.hic file) into Juicebox. With panel "new" the map opens in an additional panel beside the current one (side by side); otherwise it replaces the map in the panel named by `panel`, which is required when more than one panel is open.',
       inputSchema: {
         url: z.string().url().describe('URL to the .hic file'),
         name: z.string().optional().describe('Optional name for the map'),
         normalization: z.string().optional().describe('Normalization method (e.g., "VC", "VC_SQRT", "KR", "NONE")'),
         locus: z.string().optional().describe('Optional genomic locus (e.g., "1:1000000-2000000 1:1000000-2000000")'),
-        panel: z.enum(['current', 'new']).optional().describe('"new" opens another map panel next to the existing one and loads there (side-by-side comparisons). Default: the current panel')
+        panel: z.union([z.number().int().positive(), z.string()]).optional().describe('panel: "new" opens another panel beside the others and loads there (side-by-side comparisons); a position from the left (1, 2, ...) or a map name replaces that panel\'s map, no "all"; required when more than one panel is open')
       }
     },
     async ({ url, name, normalization, locus, panel }) => {
       return runCommand('load_map', { type: 'loadMap', url, name, normalization, locus, panel }, `Loading map from ${url}${name ? ` (${name})` : ''}${panel === 'new' ? ' in a new panel' : ''}`);
+    }
+  );
+
+  // --- Tool: close_panel ---
+  mcpServer.registerTool(
+    'close_panel',
+    {
+      title: 'Close Panel',
+      description: 'Close one panel (contact-map viewer) of the page; the panels to its right move one position left. The last panel cannot be closed.',
+      inputSchema: { panel: onePanelSchema }
+    },
+    async ({ panel }) => {
+      return runCommand('close_panel', { type: 'closePanel', panel }, 'Closing panel');
     }
   );
 

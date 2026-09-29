@@ -409,7 +409,12 @@ describe('attachRemote: §5.2 view command rows', () => {
     const cmd = { url: 'https://maps.example/b.hic', name: 'B', normalization: 'KR', locus: 'chr1 chr1' };
     const ack = await send({ type: 'loadMap', requestId: 'm1', ...cmd });
     expect(fake.browser.loadHicFile).toHaveBeenCalledWith(cmd);
-    expect(ack).toEqual({ type: 'ack', requestId: 'm1', ok: true });
+    expect(ack).toEqual({
+      type: 'ack',
+      requestId: 'm1',
+      ok: true,
+      result: `loaded ${cmd.url} into panel 1 of 1 (undefined, undefined)`,
+    });
   });
 
   it('loadControlMap with a base map present loads it and sets display mode AOB', async () => {
