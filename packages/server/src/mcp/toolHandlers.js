@@ -31,6 +31,10 @@ const ROOM_ID = /^[0-9A-HJKMNP-TV-Z]{10}$/i;
 // Zod schema for color input
 const colorSchema = z.string().regex(/^#[0-9A-Fa-f]{6}$/, 'Must be a hex color code (e.g., "#ff0000")')
   .describe('Hex color code (e.g., "#ff0000")');
+const panelSchema = z.union([z.number().int().positive(), z.string()]).optional()
+  .describe('panel: position from the left (1, 2, ...), a map name, or "all"; required when more than one panel is open');
+const onePanelSchema = z.union([z.number().int().positive(), z.string()]).optional()
+  .describe('panel: position from the left (1, 2, ...) or a map name, no "all"; required when more than one panel is open');
 
 /**
  * Register all MCP tools on the given server instance.
@@ -79,16 +83,16 @@ export function registerTools(mcpServer, deps) {
     if (!outcome.ok) {
       return { content: [{ type: 'text', text: `Error: ${outcome.error || `the page could not apply ${command.type}`}` }], isError: true };
     }
-    // A command whose ack carries text (loadTrack's per-panel lines) reports that instead.
-    return { content: [{ type: 'text', text: typeof outcome.result === 'string' ? outcome.result : text }] };
+    // A command's ack carries one line per panel it acted on (PROTOTYPE, tickets 25-26).
+    return { content: [{ type: 'text', text: typeof outcome.result === 'string' ? `${text}\n${outcome.result}` : text }] };
   }
 
   /**
    * Ask the first live page in the bound room for data (design §6) and resolve
    * {result} from its ack, or {error} with the tool result to return instead.
    */
-  async function runRequest(type) {
-    const outcome = await sendRequest({ type });
+  async function runRequest(type, payload = {}) {
+    const outcome = await sendRequest({ type, ...payload });
     const fail = (text) => ({ error: { content: [{ type: 'text', text: `Error: ${text}` }], isError: true } });
     if (outcome.status === 'no-page') return fail(NO_PAGE);
     if (outcome.status === 'unconfirmed') return fail('the page did not answer within 10 s.');
@@ -142,11 +146,12 @@ export function registerTools(mcpServer, deps) {
       inputSchema: {
         url: z.string().url().describe('URL to the control .hic file'),
         name: z.string().optional().describe('Optional name for the control map'),
-        normalization: z.string().optional().describe('Normalization method (e.g., "VC", "VC_SQRT", "KR", "NONE")')
+        normalization: z.string().optional().describe('Normalization method (e.g., "VC", "VC_SQRT", "KR", "NONE")'),
+        panel: onePanelSchema
       }
     },
-    async ({ url, name, normalization }) => {
-      return runCommand('load_control_map', { type: 'loadControlMap', url, name, normalization }, `Loading control map from ${url}${name ? ` (${name})` : ''}`);
+    async ({ url, name, normalization, panel }) => {
+      return runCommand('load_control_map', { type: 'loadControlMap', url, name, normalization, panel }, `Loading control map from ${url}${name ? ` (${name})` : ''}`);
     }
   );
 
@@ -215,11 +220,12 @@ export function registerTools(mcpServer, deps) {
       description: 'Zoom in on the contact map',
       inputSchema: {
         centerX: z.number().optional().describe('Optional X coordinate for zoom center (pixels)'),
-        centerY: z.number().optional().describe('Optional Y coordinate for zoom center (pixels)')
+        centerY: z.number().optional().describe('Optional Y coordinate for zoom center (pixels)'),
+        panel: panelSchema
       }
     },
-    async ({ centerX, centerY }) => {
-      return runCommand('zoom_in', { type: 'zoomIn', centerX, centerY }, 'Zooming in');
+    async ({ centerX, centerY, panel }) => {
+      return runCommand('zoom_in', { type: 'zoomIn', centerX, centerY, panel }, 'Zooming in');
     }
   );
 
@@ -231,11 +237,12 @@ export function registerTools(mcpServer, deps) {
       description: 'Zoom out on the contact map',
       inputSchema: {
         centerX: z.number().optional().describe('Optional X coordinate for zoom center (pixels)'),
-        centerY: z.number().optional().describe('Optional Y coordinate for zoom center (pixels)')
+        centerY: z.number().optional().describe('Optional Y coordinate for zoom center (pixels)'),
+        panel: panelSchema
       }
     },
-    async ({ centerX, centerY }) => {
-      return runCommand('zoom_out', { type: 'zoomOut', centerX, centerY }, 'Zooming out');
+    async ({ centerX, centerY, panel }) => {
+      return runCommand('zoom_out', { type: 'zoomOut', centerX, centerY, panel }, 'Zooming out');
     }
   );
 
@@ -247,15 +254,16 @@ export function registerTools(mcpServer, deps) {
       description: 'Set the foreground color scale for the contact map',
       inputSchema: {
         color: colorSchema,
-        threshold: z.number().positive().optional().describe('Optional threshold value for the color scale')
+        threshold: z.number().positive().optional().describe('Optional threshold value for the color scale'),
+        panel: panelSchema
       }
     },
-    async ({ color, threshold }) => {
+    async ({ color, threshold, panel }) => {
       const rgb = hexToRgb(color);
       if (!rgb) {
         return { content: [{ type: 'text', text: `Invalid color: ${color}. Please use a hex code (e.g., "#ff0000")` }], isError: true };
       }
-      return runCommand('set_map_foreground_color', { type: 'setForegroundColor', color: rgb, threshold }, `Map foreground color set to ${color}${threshold ? ` with threshold ${threshold}` : ''}`);
+      return runCommand('set_map_foreground_color', { type: 'setForegroundColor', color: rgb, threshold, panel }, `Map foreground color set to ${color}${threshold ? ` with threshold ${threshold}` : ''}`);
     }
   );
 
@@ -265,14 +273,14 @@ export function registerTools(mcpServer, deps) {
     {
       title: 'Set Map Background Color',
       description: 'Set the background color of the contact map',
-      inputSchema: { color: colorSchema }
+      inputSchema: { color: colorSchema, panel: panelSchema }
     },
-    async ({ color }) => {
+    async ({ color, panel }) => {
       const rgb = hexToRgb(color);
       if (!rgb) {
         return { content: [{ type: 'text', text: `Invalid color: ${color}. Please use a hex code (e.g., "#000000")` }], isError: true };
       }
-      return runCommand('set_map_background_color', { type: 'setBackgroundColor', color: rgb }, `Map background color set to ${color}`);
+      return runCommand('set_map_background_color', { type: 'setBackgroundColor', color: rgb, panel }, `Map background color set to ${color}`);
     }
   );
 
@@ -284,15 +292,16 @@ export function registerTools(mcpServer, deps) {
       description: 'Adjust the color scale (threshold) of the contact map. Use "increase" to double the threshold (lighter), "decrease" to halve it (darker), or set an exact numeric value.',
       inputSchema: {
         action: z.enum(['increase', 'decrease', 'set']).describe('Action: "increase" doubles the threshold, "decrease" halves it, "set" uses the provided value'),
-        value: z.number().positive().optional().describe('Exact threshold value (required when action is "set")')
+        value: z.number().positive().optional().describe('Exact threshold value (required when action is "set")'),
+        panel: panelSchema
       }
     },
-    async ({ action, value }) => {
+    async ({ action, value, panel }) => {
       if (action === 'set' && (value === undefined || value === null)) {
         return { content: [{ type: 'text', text: 'A positive numeric value is required when action is "set"' }], isError: true };
       }
       const desc = action === 'set' ? `set to ${value}` : action === 'increase' ? 'increased (doubled)' : 'decreased (halved)';
-      return runCommand('set_color_scale', { type: 'setColorScale', action, value }, `Color scale threshold ${desc}`);
+      return runCommand('set_color_scale', { type: 'setColorScale', action, value, panel }, `Color scale threshold ${desc}`);
     }
   );
 
@@ -343,10 +352,11 @@ export function registerTools(mcpServer, deps) {
       description: 'Change the normalization method for the currently loaded Hi-C contact map. This changes the normalization in-place without reloading the map. Available normalizations: NONE (raw counts), VC (Coverage), VC_SQRT (Coverage-Sqrt), KR (Balanced / Knight-Ruiz matrix balancing), SCALE, INTER_SCALE, GW_SCALE. The user may refer to normalizations by either their internal name or their visual/spoken name.',
       inputSchema: {
         normalization: z.string()
-          .describe('Normalization method. Common values: NONE (raw counts), VC (Coverage), VC_SQRT (Coverage-Sqrt), KR (Balanced / Knight-Ruiz), SCALE, INTER_SCALE, GW_SCALE. The available normalizations depend on the loaded map.')
+          .describe('Normalization method. Common values: NONE (raw counts), VC (Coverage), VC_SQRT (Coverage-Sqrt), KR (Balanced / Knight-Ruiz), SCALE, INTER_SCALE, GW_SCALE. The available normalizations depend on the loaded map.'),
+        panel: panelSchema
       }
     },
-    async ({ normalization }) => {
+    async ({ normalization, panel }) => {
       const normNames = {
         NONE: 'None',
         VC: 'Coverage (VC)',
@@ -356,7 +366,7 @@ export function registerTools(mcpServer, deps) {
         INTER_SCALE: 'INTER_SCALE',
         GW_SCALE: 'GW_SCALE'
       };
-      return runCommand('select_normalization', { type: 'setNormalization', normalization }, `Normalization set to ${normNames[normalization] || normalization}`);
+      return runCommand('select_normalization', { type: 'setNormalization', normalization, panel }, `Normalization set to ${normNames[normalization] || normalization}`);
     }
   );
 
@@ -366,10 +376,10 @@ export function registerTools(mcpServer, deps) {
     {
       title: 'List Tracks',
       description: 'List all loaded 1D and 2D tracks in the current Juicebox session, including their names, types, colors, data ranges, and display settings.',
-      inputSchema: {}
+      inputSchema: { panel: onePanelSchema }
     },
-    async () => {
-      const { result: tracks, error } = await runRequest('getTrackList');
+    async ({ panel }) => {
+      const { result: tracks, error } = await runRequest('getTrackList', { panel });
       if (error) return error;
       if (!tracks || tracks.length === 0) {
         return { content: [{ type: 'text', text: 'No tracks loaded.' }] };
@@ -400,11 +410,12 @@ export function registerTools(mcpServer, deps) {
       title: 'Remove Track',
       description: 'Remove a loaded track from Juicebox by name or index number (use list_tracks to see available tracks).',
       inputSchema: {
-        track: z.string().describe('Track name or 1-based index number')
+        track: z.string().describe('Track name or 1-based index number'),
+        panel: panelSchema
       }
     },
-    async ({ track }) => {
-      return runCommand('remove_track', { type: 'removeTrack', track }, `Removing track: ${track}`);
+    async ({ track, panel }) => {
+      return runCommand('remove_track', { type: 'removeTrack', track, panel }, `Removing track: ${track}`);
     }
   );
 
@@ -416,11 +427,12 @@ export function registerTools(mcpServer, deps) {
       description: 'Set or reset the color of a loaded track. Omit color to reset to default.',
       inputSchema: {
         track: z.string().describe('Track name or 1-based index number'),
-        color: colorSchema.optional().describe('Hex color (e.g., "#ff0000"). Omit to reset to default.')
+        color: colorSchema.optional().describe('Hex color (e.g., "#ff0000"). Omit to reset to default.'),
+        panel: panelSchema
       }
     },
-    async ({ track, color }) => {
-      const command = { type: 'setTrackColor', track };
+    async ({ track, color, panel }) => {
+      const command = { type: 'setTrackColor', track, panel };
       if (color) {
         const rgb = hexToRgb(color);
         if (rgb) command.color = rgb;
@@ -437,11 +449,12 @@ export function registerTools(mcpServer, deps) {
       description: 'Rename a loaded track.',
       inputSchema: {
         track: z.string().describe('Current track name or 1-based index number'),
-        name: z.string().describe('New display name for the track')
+        name: z.string().describe('New display name for the track'),
+        panel: panelSchema
       }
     },
-    async ({ track, name }) => {
-      return runCommand('set_track_name', { type: 'setTrackName', track, name }, `Renaming track "${track}" to "${name}"`);
+    async ({ track, name, panel }) => {
+      return runCommand('set_track_name', { type: 'setTrackName', track, name, panel }, `Renaming track "${track}" to "${name}"`);
     }
   );
 
@@ -454,11 +467,12 @@ export function registerTools(mcpServer, deps) {
       inputSchema: {
         track: z.string().describe('Track name or 1-based index number'),
         min: z.number().describe('Minimum value'),
-        max: z.number().describe('Maximum value')
+        max: z.number().describe('Maximum value'),
+        panel: panelSchema
       }
     },
-    async ({ track, min, max }) => {
-      return runCommand('set_track_data_range', { type: 'setTrackDataRange', track, min, max }, `Setting track "${track}" data range to [${min}, ${max}]`);
+    async ({ track, min, max, panel }) => {
+      return runCommand('set_track_data_range', { type: 'setTrackDataRange', track, min, max, panel }, `Setting track "${track}" data range to [${min}, ${max}]`);
     }
   );
 
@@ -470,11 +484,12 @@ export function registerTools(mcpServer, deps) {
       description: 'Enable or disable autoscale for a 1D track.',
       inputSchema: {
         track: z.string().describe('Track name or 1-based index number'),
-        enabled: z.boolean().default(true).describe('Enable (true) or disable (false) autoscale')
+        enabled: z.boolean().default(true).describe('Enable (true) or disable (false) autoscale'),
+        panel: panelSchema
       }
     },
-    async ({ track, enabled }) => {
-      return runCommand('set_track_autoscale', { type: 'setTrackAutoscale', track, enabled }, `${enabled ? 'Enabling' : 'Disabling'} autoscale for track "${track}"`);
+    async ({ track, enabled, panel }) => {
+      return runCommand('set_track_autoscale', { type: 'setTrackAutoscale', track, enabled, panel }, `${enabled ? 'Enabling' : 'Disabling'} autoscale for track "${track}"`);
     }
   );
 
@@ -486,11 +501,12 @@ export function registerTools(mcpServer, deps) {
       description: 'Enable or disable log scale for a 1D track.',
       inputSchema: {
         track: z.string().describe('Track name or 1-based index number'),
-        enabled: z.boolean().default(true).describe('Enable (true) or disable (false) log scale')
+        enabled: z.boolean().default(true).describe('Enable (true) or disable (false) log scale'),
+        panel: panelSchema
       }
     },
-    async ({ track, enabled }) => {
-      return runCommand('set_track_log_scale', { type: 'setTrackLogScale', track, enabled }, `${enabled ? 'Enabling' : 'Disabling'} log scale for track "${track}"`);
+    async ({ track, enabled, panel }) => {
+      return runCommand('set_track_log_scale', { type: 'setTrackLogScale', track, enabled, panel }, `${enabled ? 'Enabling' : 'Disabling'} log scale for track "${track}"`);
     }
   );
 
@@ -781,10 +797,11 @@ Just ask:
             start: z.number().optional().describe('Start position in base pairs (1-based)'),
             end: z.number().optional().describe('End position in base pairs (1-based)')
           }).describe('Locus specification as structured object')
-        ]).describe('Locus to navigate to.')
+        ]).describe('Locus to navigate to.'),
+        panel: panelSchema
       }
     },
-    async ({ locus }) => {
+    async ({ locus, panel }) => {
       if (!locus) {
         return { content: [{ type: 'text', text: 'Error: Locus specification is required' }], isError: true };
       }
@@ -798,7 +815,7 @@ Just ask:
       } else {
         locusDisplay = JSON.stringify(locus);
       }
-      return runCommand('goto_locus', { type: 'gotoLocus', locus }, `Navigating to locus: ${locusDisplay}`);
+      return runCommand('goto_locus', { type: 'gotoLocus', locus, panel }, `Navigating to locus: ${locusDisplay}`);
     }
   );
 

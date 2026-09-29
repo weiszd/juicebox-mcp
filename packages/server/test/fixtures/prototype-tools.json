@@ -54,6 +54,18 @@
         "normalization": {
           "type": "string",
           "description": "Normalization method (e.g., \"VC\", \"VC_SQRT\", \"KR\", \"NONE\")"
+        },
+        "panel": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "exclusiveMinimum": 0
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "description": "panel: position from the left (1, 2, ...) or a map name, no \"all\"; required when more than one panel is open"
         }
       },
       "required": [
@@ -98,6 +110,18 @@
         "centerY": {
           "type": "number",
           "description": "Optional Y coordinate for zoom center (pixels)"
+        },
+        "panel": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "exclusiveMinimum": 0
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "description": "panel: position from the left (1, 2, ...), a map name, or \"all\"; required when more than one panel is open"
         }
       },
       "additionalProperties": false,
@@ -116,6 +140,18 @@
         "centerY": {
           "type": "number",
           "description": "Optional Y coordinate for zoom center (pixels)"
+        },
+        "panel": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "exclusiveMinimum": 0
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "description": "panel: position from the left (1, 2, ...), a map name, or \"all\"; required when more than one panel is open"
         }
       },
       "additionalProperties": false,
@@ -136,6 +172,18 @@
           "type": "number",
           "exclusiveMinimum": 0,
           "description": "Optional threshold value for the color scale"
+        },
+        "panel": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "exclusiveMinimum": 0
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "description": "panel: position from the left (1, 2, ...), a map name, or \"all\"; required when more than one panel is open"
         }
       },
       "required": [
@@ -154,6 +202,18 @@
           "type": "string",
           "pattern": "^#[0-9A-Fa-f]{6}$",
           "description": "Hex color code (e.g., \"#ff0000\")"
+        },
+        "panel": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "exclusiveMinimum": 0
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "description": "panel: position from the left (1, 2, ...), a map name, or \"all\"; required when more than one panel is open"
         }
       },
       "required": [
@@ -181,6 +241,18 @@
           "type": "number",
           "exclusiveMinimum": 0,
           "description": "Exact threshold value (required when action is \"set\")"
+        },
+        "panel": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "exclusiveMinimum": 0
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "description": "panel: position from the left (1, 2, ...), a map name, or \"all\"; required when more than one panel is open"
         }
       },
       "required": [
@@ -236,6 +308,18 @@
         "normalization": {
           "type": "string",
           "description": "Normalization method. Common values: NONE (raw counts), VC (Coverage), VC_SQRT (Coverage-Sqrt), KR (Balanced / Knight-Ruiz), SCALE, INTER_SCALE, GW_SCALE. The available normalizations depend on the loaded map."
+        },
+        "panel": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "exclusiveMinimum": 0
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "description": "panel: position from the left (1, 2, ...), a map name, or \"all\"; required when more than one panel is open"
         }
       },
       "required": [
@@ -249,7 +333,21 @@
     "name": "list_tracks",
     "inputSchema": {
       "type": "object",
-      "properties": {},
+      "properties": {
+        "panel": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "exclusiveMinimum": 0
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "description": "panel: position from the left (1, 2, ...) or a map name, no \"all\"; required when more than one panel is open"
+        }
+      },
+      "additionalProperties": false,
       "$schema": "http://json-schema.org/draft-07/schema#"
     }
   },
@@ -269,6 +367,18 @@
         "track": {
           "type": "string",
           "description": "Track name or 1-based index number"
+        },
+        "panel": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "exclusiveMinimum": 0
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "description": "panel: position from the left (1, 2, ...), a map name, or \"all\"; required when more than one panel is open"
         }
       },
       "required": [
@@ -291,6 +401,18 @@
           "type": "string",
           "pattern": "^#[0-9A-Fa-f]{6}$",
           "description": "Hex color (e.g., \"#ff0000\"). Omit to reset to default."
+        },
+        "panel": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "exclusiveMinimum": 0
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "description": "panel: position from the left (1, 2, ...), a map name, or \"all\"; required when more than one panel is open"
         }
       },
       "required": [
@@ -312,6 +434,18 @@
         "name": {
           "type": "string",
           "description": "New display name for the track"
+        },
+        "panel": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "exclusiveMinimum": 0
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "description": "panel: position from the left (1, 2, ...), a map name, or \"all\"; required when more than one panel is open"
         }
       },
       "required": [
@@ -338,6 +472,18 @@
         "max": {
           "type": "number",
           "description": "Maximum value"
+        },
+        "panel": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "exclusiveMinimum": 0
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "description": "panel: position from the left (1, 2, ...), a map name, or \"all\"; required when more than one panel is open"
         }
       },
       "required": [
@@ -362,6 +508,18 @@
           "type": "boolean",
           "default": true,
           "description": "Enable (true) or disable (false) autoscale"
+        },
+        "panel": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "exclusiveMinimum": 0
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "description": "panel: position from the left (1, 2, ...), a map name, or \"all\"; required when more than one panel is open"
         }
       },
       "required": [
@@ -384,6 +542,18 @@
           "type": "boolean",
           "default": true,
           "description": "Enable (true) or disable (false) log scale"
+        },
+        "panel": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "exclusiveMinimum": 0
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "description": "panel: position from the left (1, 2, ...), a map name, or \"all\"; required when more than one panel is open"
         }
       },
       "required": [
@@ -468,6 +638,18 @@
             }
           ],
           "description": "Locus to navigate to."
+        },
+        "panel": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "exclusiveMinimum": 0
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "description": "panel: position from the left (1, 2, ...), a map name, or \"all\"; required when more than one panel is open"
         }
       },
       "required": [

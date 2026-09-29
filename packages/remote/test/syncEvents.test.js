@@ -651,7 +651,7 @@ describe('sync events: a track this page already has', () => {
     socket.receive({ type: 'syncEvent', syncType: 'trackLoad', configs: [{ ...ctcf, format: 'bigwig' }] });
     await settle();
     expect(acksOf(socket)).toEqual([
-      { type: 'ack', requestId: 'c1', ok: true, result: `panel 1 (A, undefined): loading track "CTCF" from ${ctcf.url}` },
+      { type: 'ack', requestId: 'c1', ok: true, result: 'panel 1 (A, undefined): ok' },
     ]);
     expect(hic.current.loadTracks).toHaveBeenCalledTimes(1);
   });
