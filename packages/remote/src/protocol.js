@@ -33,6 +33,7 @@ export const CommandType = Object.freeze({
   SET_NORMALIZATION: 'setNormalization',
   LOAD_TRACK: 'loadTrack',
   GET_TRACK_LIST: 'getTrackList',
+  GET_PANEL_LIST: 'getPanelList',
   REMOVE_TRACK: 'removeTrack',
   SET_TRACK_COLOR: 'setTrackColor',
   SET_TRACK_NAME: 'setTrackName',

@@ -47,7 +47,7 @@ describe('protocol: catalogue', () => {
       [
         'loadMap', 'loadControlMap', 'loadSession', 'gotoLocus', 'zoomIn', 'zoomOut',
         'setForegroundColor', 'setBackgroundColor', 'setColorScale', 'setNormalization',
-        'loadTrack', 'getTrackList', 'removeTrack', 'setTrackColor', 'setTrackName',
+        'loadTrack', 'getTrackList', 'getPanelList', 'removeTrack', 'setTrackColor', 'setTrackName',
         'setTrackDataRange', 'setTrackAutoscale', 'setTrackLogScale',
         'getSession', 'getCompressedSession',
       ].sort(),

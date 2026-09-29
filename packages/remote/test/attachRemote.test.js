@@ -82,6 +82,7 @@ function fakeHic({ mapLoaded = true, trackPairs = [], tracks2D = [] } = {}) {
   return {
     EventBus: { globalBus: { subscribe() {}, unsubscribe() {} } },
     getCurrentBrowser: vi.fn(() => browser),
+    getAllBrowsers: vi.fn(() => [browser]),
     restoreSession: vi.fn(async () => {}),
     toJSON: vi.fn(() => ({ browsers: [{ url: 'https://maps.example/a.hic', tracks: [] }] })),
     compressedSession: vi.fn(() => 'session=blob:abc123'),
@@ -561,7 +562,12 @@ describe('attachRemote: §5.2 track command rows', () => {
         format: 'refgene',
       },
     ]);
-    expect(ack).toEqual({ type: 'ack', requestId: 'l1', ok: true });
+    expect(ack).toEqual({
+      type: 'ack',
+      requestId: 'l1',
+      ok: true,
+      result: 'panel 1 (undefined, undefined): loading track "Refseq Select" from https://tracks.example/genes.txt.gz',
+    });
   });
 
   it('loadTrack with only a url passes only the url', async () => {
@@ -575,7 +581,7 @@ describe('attachRemote: §5.2 track command rows', () => {
     const fake = fakeHic({ mapLoaded: false });
     const { send } = await joinedWith(fake);
     const ack = await send({ type: 'loadTrack', requestId: 'l3', url: 'https://tracks.example/a.bw' });
-    expect(ack).toEqual({ type: 'ack', requestId: 'l3', ok: false, error: 'No map loaded' });
+    expect(ack).toEqual({ type: 'ack', requestId: 'l3', ok: false, error: 'panel 1 (no map): No map loaded' });
     expect(fake.browser.loadTracks).not.toHaveBeenCalled();
   });
 

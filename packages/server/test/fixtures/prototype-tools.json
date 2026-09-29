@@ -207,6 +207,18 @@
           "type": "string",
           "pattern": "^#[0-9A-Fa-f]{6}$",
           "description": "Optional track color as hex code (e.g., \"#ff0000\")"
+        },
+        "panel": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "exclusiveMinimum": 0
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "description": "panel: position from the left (1, 2, ...), a map name, or \"all\"; required when more than one panel is open"
         }
       },
       "required": [
@@ -235,6 +247,14 @@
   },
   {
     "name": "list_tracks",
+    "inputSchema": {
+      "type": "object",
+      "properties": {},
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    }
+  },
+  {
+    "name": "list_panels",
     "inputSchema": {
       "type": "object",
       "properties": {},

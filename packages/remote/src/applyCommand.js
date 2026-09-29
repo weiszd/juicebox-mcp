@@ -84,15 +84,30 @@ const appliers = {
     browserWithMap(hic).setNormalization(normalization);
   },
 
-  [CommandType.LOAD_TRACK]: async ({ url, name, color, trackType, format }, { hic }) => {
+  [CommandType.LOAD_TRACK]: async ({ url, name, color, trackType, format, panel }, { hic }) => {
     const config = { url };
     if (name) config.name = name;
     if (color) config.color = rgbString(color);
     if (trackType) config.type = trackType;
     if (format) config.format = format;
-    // Not awaited: ok means the load started, not that the data arrived. juicebox.js
-    // shows a pending row meanwhile and alerts on failure itself (ADR-0017).
-    browserWithMap(hic).loadTracks([config]);
+    // PROTOTYPE (proto/encode-portal-search): one load per addressed panel, each reported
+    // on its own line; the command fails only when every panel fails.
+    const lines = [];
+    let failed = 0;
+    for (const browser of resolvePanels(hic, panel)) {
+      try {
+        if (!browser.dataset) throw new Error('No map loaded');
+        // Not awaited: ok means the load started, not that the data arrived. juicebox.js
+        // shows a pending row meanwhile and alerts on failure itself (ADR-0017).
+        browser.loadTracks([{ ...config }]);
+        lines.push(`${panelLabel(hic, browser)}: loading track${name ? ` "${name}"` : ''} from ${url}`);
+      } catch (e) {
+        failed++;
+        lines.push(`${panelLabel(hic, browser)}: ${e.message}`);
+      }
+    }
+    if (failed === lines.length) throw new Error(lines.join('\n'));
+    return lines.join('\n');
   },
 
   [CommandType.REMOVE_TRACK]: async (command, { hic }) => {
@@ -154,6 +169,22 @@ const appliers = {
     return [...pairs, ...twoD];
   },
 
+  [CommandType.GET_PANEL_LIST]: async (command, { hic }) => {
+    const current = hic.getCurrentBrowser();
+    return hic.getAllBrowsers().map((browser, i) => {
+      const { dataset, controlDataset, trackPairs, tracks2D } = browser;
+      return {
+        panel: i + 1,
+        current: browser === current,
+        map: dataset?.name ?? null,
+        genome: dataset?.genomeId ?? null,
+        controlMap: controlDataset?.name ?? null,
+        tracks: trackPairs.length + tracks2D.length,
+        locus: dataset ? locusString(browser) : null,
+      };
+    });
+  },
+
   [CommandType.GET_SESSION]: async (command, { hic }) => hic.toJSON(),
 
   [CommandType.GET_COMPRESSED_SESSION]: async (command, { hic }) => hic.compressedSession(),
@@ -194,6 +225,51 @@ const rgbString = ({ r, g, b }) => `rgb(${r},${g},${b})`;
 async function zoom(browser, direction, { centerX, centerY }) {
   const viewport = browser.contactMatrixView.viewportElement;
   await browser.zoomAndCenter(direction, centerX ?? viewport.clientWidth / 2, centerY ?? viewport.clientHeight / 2);
+}
+
+/**
+ * The browsers a command's `panel` addresses (CONTEXT.md: panel): a 1-based position
+ * from the left, "all", or a map name matched case-insensitively that must be unique.
+ * Omitted means the current panel, and is an error when more than one panel is open.
+ */
+function resolvePanels(hic, panel) {
+  const browsers = hic.getAllBrowsers();
+  if (panel === undefined || panel === null) {
+    if (browsers.length === 1) return [currentBrowser(hic)];
+    if (browsers.length === 0) throw new Error('No browser');
+    const labels = browsers.map((b, i) => `${i + 1} (${datasetLabel(b)})`);
+    throw new Error(`${browsers.length} panels open; say panel: ${labels.join(' | ')} | all`);
+  }
+  if (typeof panel === 'number') {
+    const browser = browsers[panel - 1];
+    if (!browser) throw new Error(`no panel ${panel} (${browsers.length} open)`);
+    return [browser];
+  }
+  if (panel.toLowerCase() === 'all') return browsers;
+  const positions = [];
+  browsers.forEach((b, i) => {
+    if (b.dataset?.name?.toLowerCase() === panel.toLowerCase()) positions.push(i + 1);
+  });
+  if (positions.length === 0) throw new Error(`no panel named ${panel}`);
+  if (positions.length > 1) {
+    throw new Error(`${panel} matches ${positions.length} panels; use ${positions.slice(0, -1).join(', ')} or ${positions.at(-1)}`);
+  }
+  return [browsers[positions[0] - 1]];
+}
+
+/** "panel 2 (heart, mm10)", or "panel 2 (no map)". */
+function panelLabel(hic, browser) {
+  return `panel ${hic.getAllBrowsers().indexOf(browser) + 1} (${datasetLabel(browser)})`;
+}
+
+const datasetLabel = ({ dataset }) => (dataset ? `${dataset.name}, ${dataset.genomeId}` : 'no map');
+
+/** The view as the locus box shows it: "All", or "chr1:1-2,000,000 chr1:1-2,000,000" (bp, 1-based). */
+function locusString({ dataset, state, contactMatrixView }) {
+  if (dataset.isWholeGenome(state.chr1)) return 'All';
+  const { x, y } = state.getLocus(dataset, contactMatrixView.getViewDimensions());
+  const range = ({ chr, start, end }) => `${chr}:${(start + 1).toLocaleString('en-US')}-${end.toLocaleString('en-US')}`;
+  return `${range(x)} ${range(y)}`;
 }
 
 function currentBrowser(hic) {

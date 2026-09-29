@@ -79,7 +79,8 @@ export function registerTools(mcpServer, deps) {
     if (!outcome.ok) {
       return { content: [{ type: 'text', text: `Error: ${outcome.error || `the page could not apply ${command.type}`}` }], isError: true };
     }
-    return { content: [{ type: 'text', text }] };
+    // A command whose ack carries text (loadTrack's per-panel lines) reports that instead.
+    return { content: [{ type: 'text', text: typeof outcome.result === 'string' ? outcome.result : text }] };
   }
 
   /**
@@ -315,10 +316,11 @@ export function registerTools(mcpServer, deps) {
       inputSchema: {
         url: z.string().describe('URL to the track file (e.g., bigWig, bigBed, bed, bedpe), or the keyword "genes" for the built-in gene track'),
         name: z.string().optional().describe('Optional display name for the track'),
-        color: colorSchema.optional().describe('Optional track color as hex code (e.g., "#ff0000")')
+        color: colorSchema.optional().describe('Optional track color as hex code (e.g., "#ff0000")'),
+        panel: z.union([z.number().int().positive(), z.string()]).optional().describe('panel: position from the left (1, 2, ...), a map name, or "all"; required when more than one panel is open')
       }
     },
-    async ({ url, name, color }) => {
+    async ({ url, name, color, panel }) => {
       const preset = TRACK_PRESETS[url.toLowerCase()];
       const resolvedUrl = preset ? preset.url : url;
       const resolvedName = name || (preset ? preset.name : undefined);
@@ -328,6 +330,7 @@ export function registerTools(mcpServer, deps) {
       if (resolvedColor) command.color = resolvedColor;
       if (preset?.type) command.trackType = preset.type;
       if (preset?.format) command.format = preset.format;
+      if (panel !== undefined) command.panel = panel;
       return runCommand('load_track', command, `Loading track${resolvedName ? ` "${resolvedName}"` : ''} from ${resolvedUrl}`);
     }
   );
@@ -372,6 +375,21 @@ export function registerTools(mcpServer, deps) {
         return { content: [{ type: 'text', text: 'No tracks loaded.' }] };
       }
       return { content: [{ type: 'text', text: JSON.stringify(tracks, null, 2) }] };
+    }
+  );
+
+  // --- Tool: list_panels ---
+  mcpServer.registerTool(
+    'list_panels',
+    {
+      title: 'List Panels',
+      description: 'List the panels (contact-map viewers) open in the page, left to right: position, whether it is the current one, map name, genome, control map, track count and locus. Tools that take `panel` address a panel by this position, by its map name, or "all".',
+      inputSchema: {}
+    },
+    async () => {
+      const { result: panels, error } = await runRequest('getPanelList');
+      if (error) return error;
+      return { content: [{ type: 'text', text: JSON.stringify(panels, null, 2) }] };
     }
   );
 
