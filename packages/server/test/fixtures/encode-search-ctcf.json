@@ -1,0 +1,31 @@
+{
+  "@id": "/search/?type=Experiment&format=json",
+  "@type": ["Search"],
+  "total": 38,
+  "@graph": [
+    {
+      "@id": "/experiments/ENCSR000CTC/",
+      "accession": "ENCSR000CTC",
+      "assay_title": "TF ChIP-seq",
+      "biosample_summary": "Homo sapiens heart left ventricle tissue female adult (53 years)",
+      "target": { "label": "CTCF" },
+      "lab": { "title": "Michael Snyder, Stanford" },
+      "description": "CTCF ChIP-seq on human heart left ventricle"
+    },
+    {
+      "@id": "/files/ENCFF009BW/",
+      "href": "/files/ENCFF009BW/@@download/ENCFF009BW.bigWig",
+      "accession": "ENCFF009BW",
+      "file_format": "bigWig",
+      "output_type": "fold change over control",
+      "assembly": "GRCh38"
+    }
+  ],
+  "facets": [
+    { "field": "type", "title": "Object type", "terms": [{ "key": "Experiment", "doc_count": 38 }] },
+    { "field": "biosample_ontology.term_name", "title": "Biosample", "terms": [
+      { "key": "heart left ventricle", "doc_count": 21 }, { "key": "right atrium auricular region", "doc_count": 17 }
+    ] },
+    { "field": "lab.title", "title": "Lab", "terms": [] }
+  ]
+}

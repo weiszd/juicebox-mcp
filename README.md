@@ -34,6 +34,28 @@ The server is `https://jbmcp.3dg.io/mcp` (Streamable HTTP, no auth).
 
 Then ask for the Juicebox link. `get_juicebox_url` returns a join link (`https://aidenlab.org/juicebox/?room=…`); open it, and ask the client to load a map and go to a locus. A page that started its own room ("Start room" in juicebox-web) can be handed to the client by pasting its join link; the client calls `join_room`.
 
+## Tools
+
+A page can hold several panels (juicebox.js viewers side by side), numbered 1, 2, … from the left. Every tool marked *panel* takes `panel`: that position, a map name that is unique among the panels, or `"all"` (not on `load_map`, `load_control_map`, `list_tracks`, `close_panel`). With one panel open it may be omitted; with several it is required, and the error lists the panels ([ADR-0007](docs/adr/0007-panels-addressed-by-position.md)).
+
+| Tool | Does | panel |
+|---|---|---|
+| `get_juicebox_url`, `join_room` | join link for the session's room; bind the session to another room | |
+| `load_map` | load a `.hic` map; `panel: "new"` opens it in a new panel beside the others | new, one |
+| `load_control_map` | load a control map (display mode AOB) | one |
+| `close_panel` | close a panel; the ones to its right move left; never the last | one |
+| `list_panels` | the panels left to right: map, genome, control map, track count, locus | |
+| `goto_locus`, `zoom_in`, `zoom_out` | navigate | yes |
+| `set_map_foreground_color`, `set_map_background_color`, `set_color_scale`, `select_normalization` | map look | yes |
+| `load_track`, `remove_track`, `set_track_color`, `set_track_name`, `set_track_data_range`, `set_track_autoscale`, `set_track_log_scale` | tracks, by name or 1-based number (by name only with `"all"`) | yes |
+| `list_tracks` | one panel's 1D and 2D tracks | one |
+| `load_session`, `save_session`, `create_shareable_url` | session JSON in and out; snapshot link | |
+| `search_encode_hic` | live ENCODE portal: Hi-C experiments (tissues, intact Hi-C, cell lines) with their map and track files | |
+| `search_encode` | live ENCODE portal: any other assay, annotation, biosample, file | |
+| `search_map_catalogs` | the curated ENCODE and 4DN catalogs juicebox-web ships (was `search_maps`) | |
+| `get_map_details`, `get_data_source_statistics`, `list_data_sources` | catalog details and counts | |
+| `juicebox_help`, `get_server_status` | examples; server status | |
+
 ## Run everything locally
 
 Until juicebox.js 4.6.0 and `@aidenlab/juicebox-remote` are on npm and the juicebox-web widget has landed, the local stack is built from the weiszd forks: juicebox.js on branch `ticket/05-release-4.6.0`, juicebox-web on branch `ticket/16` (neither pushed yet, so use local checkouts). The layout below assumes the three checkouts are siblings.

@@ -20,63 +20,87 @@ export async function applyCommand(hic, container, command) {
 
 // Payload shapes are what the server's tool handlers send (packages/server/src/mcp/toolHandlers.js).
 const appliers = {
-  [CommandType.LOAD_MAP]: async ({ url, name, normalization, locus }, { hic }) => {
-    await currentBrowser(hic).loadHicFile({ url, name, normalization, locus });
+  [CommandType.LOAD_MAP]: async ({ url, name, normalization, locus, panel }, { hic, container }) => {
+    // Panel 'new' opens another viewer beside the current one, the way juicebox-web's
+    // clone button does, and loads the map there; otherwise the addressed panel's map is
+    // replaced (ADR-0007).
+    let browser;
+    if (panel === 'new') {
+      const { width, height } = currentBrowser(hic).config;
+      browser = await hic.createBrowser(container, { width, height });
+      hic.setCurrentBrowser(browser);
+    } else {
+      browser = onePanel(hic, panel, 'load_map');
+    }
+    await browser.loadHicFile({ url, name, normalization, locus });
+    // After applying config.locus juicebox.js adopts a compatible peer's view; put the asked-for locus back.
+    if (locus) await browser.parseGotoInput(locus);
+    const browsers = hic.getAllBrowsers();
+    return `loaded ${browser.dataset?.name ?? url} into panel ${browsers.indexOf(browser) + 1} of ${browsers.length} (${datasetLabel(browser)})`;
   },
 
-  [CommandType.LOAD_CONTROL_MAP]: async ({ url, name, normalization }, { hic }) => {
-    const browser = currentBrowser(hic);
+  [CommandType.LOAD_CONTROL_MAP]: async ({ url, name, normalization, panel }, { hic }) => {
+    const browser = onePanel(hic, panel, 'load_control_map');
     await browser.loadHicControlFile({ url, name, normalization });
     if (browser.dataset && browser.controlDataset && browser.getDisplayMode() !== 'AOB') {
       await browser.setDisplayMode('AOB');
     }
+    return `${panelLabel(hic, browser)}: ok`;
+  },
+
+  [CommandType.CLOSE_PANEL]: async ({ panel }, { hic }) => {
+    const browser = onePanel(hic, panel, 'close_panel');
+    if (hic.getAllBrowsers().length === 1) throw new Error('cannot close the last panel');
+    const closed = panelLabel(hic, browser);
+    // What juicebox.js's own deleteBrowser does; juicebox.js 4.7.0 exports no deleteBrowser
+    // on its namespace (ADR-0007).
+    browser.registry.delete(browser);
+    const remaining = hic.getAllBrowsers().map((b, i) => `${i + 1} (${datasetLabel(b)})`);
+    return `closed ${closed}; remaining: ${remaining.join(' | ')}`;
   },
 
   [CommandType.LOAD_SESSION]: async ({ sessionData }, { hic, container }) => {
     await hic.restoreSession(container, sessionData);
   },
 
-  [CommandType.GOTO_LOCUS]: async ({ locus }, { hic }) => {
-    await browserWithMap(hic).parseGotoInput(locus);
-  },
+  [CommandType.GOTO_LOCUS]: ({ locus, panel }, { hic }) =>
+    forPanels(hic, panel, (browser) => browser.parseGotoInput(locus)),
 
-  [CommandType.ZOOM_IN]: (command, { hic }) => zoom(browserWithMap(hic), 1, command),
-  [CommandType.ZOOM_OUT]: (command, { hic }) => zoom(browserWithMap(hic), -1, command),
+  [CommandType.ZOOM_IN]: (command, { hic }) => forPanels(hic, command.panel, (browser) => zoom(browser, 1, command)),
+  [CommandType.ZOOM_OUT]: (command, { hic }) => forPanels(hic, command.panel, (browser) => zoom(browser, -1, command)),
 
-  [CommandType.SET_FOREGROUND_COLOR]: async ({ color: { r, g, b }, threshold }, { hic }) => {
-    const browser = browserWithMap(hic);
-    const colorScale = browser.getColorScale();
-    colorScale.setColorComponents({ r, g, b });
-    browser.contactMatrixView.setColorScale(colorScale);
-    // Tiles are cached without their colour; setting the threshold, even to the
-    // current one, is the public call that invalidates them and repaints.
-    browser.setColorScaleThreshold(threshold ?? colorScale.getThreshold());
-  },
+  [CommandType.SET_FOREGROUND_COLOR]: ({ color: { r, g, b }, threshold, panel }, { hic }) =>
+    forPanels(hic, panel, (browser) => {
+      const colorScale = browser.getColorScale();
+      colorScale.setColorComponents({ r, g, b });
+      browser.contactMatrixView.setColorScale(colorScale);
+      // Tiles are cached without their colour; setting the threshold, even to the
+      // current one, is the public call that invalidates them and repaints.
+      browser.setColorScaleThreshold(threshold ?? colorScale.getThreshold());
+    }),
 
-  [CommandType.SET_BACKGROUND_COLOR]: async ({ color: { r, g, b } }, { hic }) => {
-    browserWithMap(hic).contactMatrixView.setBackgroundColor({ r, g, b });
-  },
+  [CommandType.SET_BACKGROUND_COLOR]: ({ color: { r, g, b }, panel }, { hic }) =>
+    forPanels(hic, panel, (browser) => browser.contactMatrixView.setBackgroundColor({ r, g, b })),
 
-  [CommandType.SET_COLOR_SCALE]: async ({ action, value }, { hic }) => {
-    const browser = browserWithMap(hic);
-    const current = () => browser.getColorScale().getThreshold();
-    switch (action) {
-      case 'increase':
-        return browser.setColorScaleThreshold(current() * 2);
-      case 'decrease':
-        return browser.setColorScaleThreshold(current() / 2);
-      case 'set':
-        return browser.setColorScaleThreshold(value);
-      default:
-        throw new Error(`Unknown color scale action: ${action}`);
-    }
-  },
+  [CommandType.SET_COLOR_SCALE]: ({ action, value, panel }, { hic }) =>
+    forPanels(hic, panel, (browser) => {
+      const current = () => browser.getColorScale().getThreshold();
+      switch (action) {
+        case 'increase':
+          return browser.setColorScaleThreshold(current() * 2);
+        case 'decrease':
+          return browser.setColorScaleThreshold(current() / 2);
+        case 'set':
+          return browser.setColorScaleThreshold(value);
+        default:
+          throw new Error(`Unknown color scale action: ${action}`);
+      }
+    }),
 
-  [CommandType.SET_NORMALIZATION]: async ({ normalization }, { hic }) => {
-    browserWithMap(hic).setNormalization(normalization);
-  },
+  [CommandType.SET_NORMALIZATION]: ({ normalization, panel }, { hic }) =>
+    forPanels(hic, panel, (browser) => browser.setNormalization(normalization)),
 
-  [CommandType.LOAD_TRACK]: async ({ url, name, color, trackType, format }, { hic }) => {
+  [CommandType.LOAD_TRACK]: ({ url, name, color, trackType, format, panel }, { hic }) => {
     const config = { url };
     if (name) config.name = name;
     if (color) config.color = rgbString(color);
@@ -84,47 +108,46 @@ const appliers = {
     if (format) config.format = format;
     // Not awaited: ok means the load started, not that the data arrived. juicebox.js
     // shows a pending row meanwhile and alerts on failure itself (ADR-0017).
-    browserWithMap(hic).loadTracks([config]);
+    return forPanels(hic, panel, (browser) => {
+      browser.loadTracks([{ ...config }]);
+    });
   },
 
-  [CommandType.REMOVE_TRACK]: async (command, { hic }) => {
-    const browser = browserWithMap(hic);
-    const { trackPair, track2D } = findTrack(browser, command);
-    if (track2D) browser.removeTrack2D(track2D);
-    else browser.layoutController.removeTrackXYPair(trackPair);
-  },
+  [CommandType.REMOVE_TRACK]: (command, { hic }) =>
+    forTrackPanels(hic, command, (browser) => {
+      const { trackPair, track2D } = findTrack(browser, command);
+      if (track2D) browser.removeTrack2D(track2D);
+      else browser.layoutController.removeTrackXYPair(trackPair);
+    }),
 
-  [CommandType.SET_TRACK_COLOR]: async (command, { hic }) => {
-    const browser = browserWithMap(hic);
-    const { trackPair, track2D } = findTrack(browser, command);
-    // No colour resets the track to its default (a 2D track's features' own colours).
-    const color = command.color ? rgbString(command.color) : undefined;
-    if (track2D) browser.setTrack2DColor(track2D, color);
-    else trackPair.setColor(color);
-  },
+  [CommandType.SET_TRACK_COLOR]: (command, { hic }) =>
+    forTrackPanels(hic, command, (browser) => {
+      const { trackPair, track2D } = findTrack(browser, command);
+      // No colour resets the track to its default (a 2D track's features' own colours).
+      const color = command.color ? rgbString(command.color) : undefined;
+      if (track2D) browser.setTrack2DColor(track2D, color);
+      else trackPair.setColor(color);
+    }),
 
-  [CommandType.SET_TRACK_NAME]: async (command, { hic }) => {
-    const browser = browserWithMap(hic);
-    const { trackPair, track2D } = findTrack(browser, command);
-    if (track2D) browser.setTrack2DName(track2D, command.name);
-    // igv's name setter relabels the row, which posts the change event once.
-    else trackPair.track.name = command.name;
-  },
+  [CommandType.SET_TRACK_NAME]: (command, { hic }) =>
+    forTrackPanels(hic, command, (browser) => {
+      const { trackPair, track2D } = findTrack(browser, command);
+      if (track2D) browser.setTrack2DName(track2D, command.name);
+      // igv's name setter relabels the row, which posts the change event once.
+      else trackPair.track.name = command.name;
+    }),
 
-  [CommandType.SET_TRACK_DATA_RANGE]: async (command, { hic }) => {
-    findTrackPair(browserWithMap(hic), command).setDataRange(command.min, command.max);
-  },
+  [CommandType.SET_TRACK_DATA_RANGE]: (command, { hic }) =>
+    forTrackPanels(hic, command, (browser) => findTrackPair(browser, command).setDataRange(command.min, command.max)),
 
-  [CommandType.SET_TRACK_AUTOSCALE]: async (command, { hic }) => {
-    findTrackPair(browserWithMap(hic), command).setAutoscale(command.enabled);
-  },
+  [CommandType.SET_TRACK_AUTOSCALE]: (command, { hic }) =>
+    forTrackPanels(hic, command, (browser) => findTrackPair(browser, command).setAutoscale(command.enabled)),
 
-  [CommandType.SET_TRACK_LOG_SCALE]: async (command, { hic }) => {
-    findTrackPair(browserWithMap(hic), command).setLogScale(command.enabled);
-  },
+  [CommandType.SET_TRACK_LOG_SCALE]: (command, { hic }) =>
+    forTrackPanels(hic, command, (browser) => findTrackPair(browser, command).setLogScale(command.enabled)),
 
   [CommandType.GET_TRACK_LIST]: async (command, { hic }) => {
-    const { trackPairs, tracks2D } = currentBrowser(hic);
+    const { trackPairs, tracks2D } = onePanel(hic, command.panel, 'list_tracks');
     // A pending track pair carries its config itself; a loaded one carries it on the track.
     const pairs = trackPairs.map(({ track, config = track.config }, i) => ({
       index: i + 1,
@@ -144,6 +167,22 @@ const appliers = {
       color: track.color,
     }));
     return [...pairs, ...twoD];
+  },
+
+  [CommandType.GET_PANEL_LIST]: async (command, { hic }) => {
+    const current = hic.getCurrentBrowser();
+    return hic.getAllBrowsers().map((browser, i) => {
+      const { dataset, controlDataset, trackPairs, tracks2D } = browser;
+      return {
+        panel: i + 1,
+        current: browser === current,
+        map: dataset?.name ?? null,
+        genome: dataset?.genomeId ?? null,
+        controlMap: controlDataset?.name ?? null,
+        tracks: trackPairs.length + tracks2D.length,
+        locus: dataset ? locusString(browser) : null,
+      };
+    });
   },
 
   [CommandType.GET_SESSION]: async (command, { hic }) => hic.toJSON(),
@@ -188,14 +227,99 @@ async function zoom(browser, direction, { centerX, centerY }) {
   await browser.zoomAndCenter(direction, centerX ?? viewport.clientWidth / 2, centerY ?? viewport.clientHeight / 2);
 }
 
+/**
+ * The browsers a command's `panel` addresses (CONTEXT.md: panel): a 1-based position
+ * from the left, "all", or a map name matched case-insensitively that must be unique.
+ * Omitted means the current panel, and is an error when more than one panel is open;
+ * that error offers "all" only to a command that takes it (`acceptsAll`).
+ */
+function resolvePanels(hic, panel, acceptsAll = true) {
+  const browsers = hic.getAllBrowsers();
+  if (panel === undefined || panel === null) {
+    if (browsers.length === 1) return [currentBrowser(hic)];
+    if (browsers.length === 0) throw new Error('No browser');
+    const labels = browsers.map((b, i) => `${i + 1} (${datasetLabel(b)})`);
+    throw new Error(`${browsers.length} panels open; say panel: ${labels.join(' | ')}${acceptsAll ? ' | all' : ''}`);
+  }
+  // A string of digits ("2") is a position, not a name.
+  if (typeof panel === 'string' && /^\d+$/.test(panel.trim())) panel = Number(panel);
+  if (typeof panel === 'number') {
+    const browser = browsers[panel - 1];
+    if (!browser) throw new Error(`no panel ${panel} (${browsers.length} open)`);
+    return [browser];
+  }
+  if (isAll(panel)) return browsers;
+  const positions = [];
+  browsers.forEach((b, i) => {
+    if (b.dataset?.name?.toLowerCase() === panel.toLowerCase()) positions.push(i + 1);
+  });
+  if (positions.length === 0) throw new Error(`no panel named ${panel}`);
+  if (positions.length > 1) {
+    throw new Error(`${panel} matches ${positions.length} panels; use ${positions.slice(0, -1).join(', ')} or ${positions.at(-1)}`);
+  }
+  return [browsers[positions[0] - 1]];
+}
+
+/**
+ * Apply `apply` to each panel `panel` addresses; each needs a map. Resolves to one
+ * line per panel, "panel N (map, genome): ok" or its error; rejects only when every
+ * panel fails.
+ */
+async function forPanels(hic, panel, apply) {
+  const lines = [];
+  let failed = 0;
+  for (const browser of resolvePanels(hic, panel)) {
+    try {
+      if (!browser.dataset) throw new Error('No map loaded');
+      await apply(browser);
+      lines.push(`${panelLabel(hic, browser)}: ok`);
+    } catch (e) {
+      failed++;
+      lines.push(`${panelLabel(hic, browser)}: ${e.message}`);
+    }
+  }
+  if (failed === lines.length) throw new Error(lines.join('\n'));
+  return lines.join('\n');
+}
+
+/** The one browser `panel` addresses, for a command that does not take "all". */
+function onePanel(hic, panel, tool) {
+  if (isAll(panel)) {
+    throw new Error(`${tool} acts on one panel; "all" is not accepted`);
+  }
+  return resolvePanels(hic, panel, false)[0];
+}
+
+/**
+ * forPanels for a track command. With "all" the track must be named: a track
+ * number is a position in one panel's list and means a different track in each.
+ */
+function forTrackPanels(hic, command, apply) {
+  if (isAll(command.panel) && /^\d+$/.test(String(command.track).trim())) {
+    throw new Error(`with panel "all", name the track; track ${command.track} is a different track in each panel`);
+  }
+  return forPanels(hic, command.panel, apply);
+}
+
+const isAll = (panel) => typeof panel === 'string' && panel.trim().toLowerCase() === 'all';
+
+/** "panel 2 (heart, mm10)", or "panel 2 (no map)". */
+function panelLabel(hic, browser) {
+  return `panel ${hic.getAllBrowsers().indexOf(browser) + 1} (${datasetLabel(browser)})`;
+}
+
+const datasetLabel = ({ dataset }) => (dataset ? `${dataset.name}, ${dataset.genomeId}` : 'no map');
+
+/** The view as the locus box shows it: "All", or "chr1:1-2,000,000 chr1:1-2,000,000" (bp, 1-based). */
+function locusString({ dataset, state, contactMatrixView }) {
+  if (dataset.isWholeGenome(state.chr1)) return 'All';
+  const { x, y } = state.getLocus(dataset, contactMatrixView.getViewDimensions());
+  const range = ({ chr, start, end }) => `${chr}:${(start + 1).toLocaleString('en-US')}-${end.toLocaleString('en-US')}`;
+  return `${range(x)} ${range(y)}`;
+}
+
 function currentBrowser(hic) {
   const browser = hic.getCurrentBrowser();
   if (!browser) throw new Error('No browser');
-  return browser;
-}
-
-function browserWithMap(hic) {
-  const browser = currentBrowser(hic);
-  if (!browser.dataset) throw new Error('No map loaded');
   return browser;
 }

@@ -23,6 +23,7 @@ export const MessageType = Object.freeze({
 export const CommandType = Object.freeze({
   LOAD_MAP: 'loadMap',
   LOAD_CONTROL_MAP: 'loadControlMap',
+  CLOSE_PANEL: 'closePanel',
   LOAD_SESSION: 'loadSession',
   GOTO_LOCUS: 'gotoLocus',
   ZOOM_IN: 'zoomIn',
@@ -33,6 +34,7 @@ export const CommandType = Object.freeze({
   SET_NORMALIZATION: 'setNormalization',
   LOAD_TRACK: 'loadTrack',
   GET_TRACK_LIST: 'getTrackList',
+  GET_PANEL_LIST: 'getPanelList',
   REMOVE_TRACK: 'removeTrack',
   SET_TRACK_COLOR: 'setTrackColor',
   SET_TRACK_NAME: 'setTrackName',

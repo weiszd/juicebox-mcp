@@ -116,20 +116,30 @@ renders it from `onStatus` / `remote.joinUrl`.
 
 ### 5.2 Commands → public surface
 
-| Command | Applied as |
-|---|---|
-| `loadMap {url,name,normalization,locus}` | `browser.loadHicFile(config)` |
-| `loadControlMap` | `browser.loadHicControlFile(config)`; then `setDisplayMode('AOB')` if both maps present |
-| `loadSession {session}` | `hic.restoreSession(container, session)` |
-| `gotoLocus {locus}` | `browser.parseGotoInput(locus)` (§4) |
-| `zoomIn` / `zoomOut` | `browser.zoomAndCenter(±1, cx, cy)` |
-| `setForegroundColor {r,g,b}` | `browser.getColorScale().setColorComponents(...)`; `contactMatrixView.setColorScale` |
-| `setBackgroundColor` | `contactMatrixView.setBackgroundColor(rgb)` |
-| `setColorScale {op, value}` | `browser.setColorScaleThreshold(t)` |
-| `setNormalization` | `browser.setNormalization(n)` |
-| `loadTrack {configs}` | `browser.loadTracks(configs)` (does not await completion — ADR‑0017) |
-| `getTrackList {requestId}` | enumerate `browser.trackPairs` then `browser.tracks2D` → reply `trackListData` |
-| `removeTrack`, `setTrackColor`, `setTrackName`, `setTrackDataRange`, `setTrackAutoscale`, `setTrackLogScale` | resolve by name or 1‑based index, then `layoutController.removeTrackXYPair(tp)` / `tp.setColor` / `tp.setTrackLabelName` / `tp.setDataRange` / `tp.track.autoscale=` / `tp.track.logScale=` |
+`browser` is the panel the command's `panel` addresses (ADR‑0007, CONTEXT.md:
+panel): a 1‑based position in `hic.getAllBrowsers()` (left to right), a map name
+only one panel shows, or `"all"` (every panel, where the table says so). Omitted,
+it is the current browser when one panel is open and an error listing the panels
+when several are. An ack's `result` names the panel(s) acted on, one line each,
+e.g. `panel 2 (heart, mm10): ok`; with `"all"` the command fails only when every
+panel fails.
+
+| Command | `panel` | Applied as |
+|---|---|---|
+| `loadMap {url,name,normalization,locus,panel}` | one, or `"new"` | `browser.loadHicFile(config)`; `"new"`: `hic.createBrowser(container, {width,height})` + `hic.setCurrentBrowser` first; with a locus, `parseGotoInput(locus)` again after the load (juicebox.js adopts a compatible peer's view); result `loaded X into panel N of M (map, genome)` |
+| `loadControlMap {…,panel}` | one | `browser.loadHicControlFile(config)`; then `setDisplayMode('AOB')` if both maps present |
+| `closePanel {panel}` | one | `browser.registry.delete(browser)` (what juicebox.js's `deleteBrowser` does; 4.7.0 does not export it); refused for the last panel; result names the remaining panels |
+| `loadSession {session}` | — | `hic.restoreSession(container, session)` |
+| `gotoLocus {locus,panel}` | one or all | `browser.parseGotoInput(locus)` (§4) |
+| `zoomIn` / `zoomOut {panel}` | one or all | `browser.zoomAndCenter(±1, cx, cy)` |
+| `setForegroundColor {r,g,b,panel}` | one or all | `browser.getColorScale().setColorComponents(...)`; `contactMatrixView.setColorScale` |
+| `setBackgroundColor {panel}` | one or all | `contactMatrixView.setBackgroundColor(rgb)` |
+| `setColorScale {op, value, panel}` | one or all | `browser.setColorScaleThreshold(t)` |
+| `setNormalization {panel}` | one or all | `browser.setNormalization(n)` |
+| `loadTrack {configs,panel}` | one or all | `browser.loadTracks(configs)` (does not await completion — ADR‑0017) |
+| `getTrackList {requestId,panel}` | one | enumerate `browser.trackPairs` then `browser.tracks2D` → reply `trackListData` |
+| `getPanelList {requestId}` | — | `hic.getAllBrowsers()` → `[{panel, current, map, genome, controlMap, tracks, locus}]` |
+| `removeTrack`, `setTrackColor`, `setTrackName`, `setTrackDataRange`, `setTrackAutoscale`, `setTrackLogScale` `{track,…,panel}` | one or all | resolve by name or 1‑based index (by name only with `"all"`), then `layoutController.removeTrackXYPair(tp)` / `tp.setColor` / `tp.setTrackLabelName` / `tp.setDataRange` / `tp.track.autoscale=` / `tp.track.logScale=` |
 | `getSession` / `getCompressedSession {requestId}` | `hic.toJSON()` / `hic.compressedSession()` → reply |
 | `syncEvent` | §5.3, with the re‑entrancy guard |
 | `peerSessionData` | validate, then `hic.restoreSession` |
@@ -149,6 +159,9 @@ renders it from `onStatus` / `remote.joinUrl`.
 
 Receiving a `syncEvent` sets `isSyncing = true` around the apply so the
 resulting callbacks are not re‑emitted. Same rule as the prototype.
+
+Sync events follow, and are applied to, the current panel only; a page with
+several panels drifts from its peers until sync events name a panel (ticket 29).
 
 ### 5.4 Protocol (`protocol.js`)
 
@@ -201,10 +214,29 @@ juicebox-mcp/
     account and domain juicebox-web uses; key is a `wrangler secret`).
     juicebox-web's `jb-shortlink` worker is a GET redirector, not a shortener.
   - `save_session` → returns the session JSON as a text result (no filesystem).
-  - `search_maps` and friends read a copy of the juicebox-web ENCODE and 4DN
-    catalog modules (`src/search/catalogs.js`, header `source: juicebox-web
-    js/…ContactMapDatasourceConfig.js`); the AidenLab `hicfiles.json` list is a
-    later ticket.
+  - `search_maps`, renamed `search_map_catalogs` (ticket 24) so the model does
+    not mistake it for a portal search, and friends read a copy of the
+    juicebox-web ENCODE and 4DN catalog modules (`src/search/catalogs.js`,
+    header `source: juicebox-web js/…ContactMapDatasourceConfig.js`): ≈176
+    ENCODE cell-line maps, ≈600 4DN maps, no tissues, no intact Hi-C; the
+    AidenLab `hicfiles.json` list is a later ticket.
+  - **New** `search_encode_hic {biosample?, assay?, classification?, assembly?,
+    query?, limit?}` → live, experiment‑first search of the ENCODE portal
+    (`src/search/encodePortal.js`): released Hi‑C experiments (intact, in situ,
+    Hi‑C, dilution), each with its released `.hic` maps (MAPQ‑thresholded first)
+    and the companion files the viewer loads as tracks (bedpe loops / domains /
+    stripes, bed subcompartments, bigWig compartments). Organ words filter on
+    `biosample_ontology.organ_slims`; zero hits there falls back to full‑text
+    `searchTerm` (cell lines such as K562). **New** `search_encode {type?,
+    query?, filters?, limit?}` → any other portal search, facet filters passed
+    through verbatim, facets returned. Portal facts (ticket 24): AWS WAF in
+    front, so an explicit non‑browser User‑Agent is answered in <300 ms, a
+    spoofed browser UA gets 502 and no UA hangs; zero hits is HTTP 404 with a
+    normal JSON body (`total: 0`); `field=` selects properties and dotted names
+    embed (`files.href`); a repeated filter key ORs; `organ_slims` includes
+    organ‑derived cell lines (colon → HCT116), hence `classification`.
+  - **New** `list_panels` and `close_panel`, and `panel` on every one‑panel tool
+    and on `load_map` (`"new"`), §5.2 and ADR‑0007.
   - Everything else: same names, same schemas.
 - **Room lifecycle (Durable Object):** the last saved session lives in DO
   storage (the prototype already did this); an alarm deletes the room's storage

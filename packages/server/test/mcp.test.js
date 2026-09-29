@@ -8,6 +8,8 @@ import jsQR from 'jsqr';
 import { MessageType, CommandType } from '@aidenlab/juicebox-remote/protocol';
 import { openPage, join, closePages } from './pages.js';
 import prototypeTools from './fixtures/prototype-tools.json';
+import heartHic from './fixtures/encode-hic-experiments.json';
+import ctcfSearch from './fixtures/encode-search-ctcf.json';
 import worker from '../src/index.js';
 
 const ROOM_ID = /^[0-9A-HJKMNP-TV-Z]{10}$/; // Crockford base32: no I, L, O, U
@@ -132,12 +134,22 @@ describe('tools/list', () => {
     const res = await rpc('tools/list', {}, { 'mcp-session-id': await newSession() });
     const { tools } = (await res.json()).result;
 
-    expect(tools).toHaveLength(28);
+    expect(tools).toHaveLength(32);
     const byName = Object.fromEntries(tools.map((t) => [t.name, t.inputSchema]));
     for (const { name, inputSchema } of prototypeTools) {
       expect(byName[name], name).toEqual(inputSchema);
     }
     expect(byName.join_room.required).toEqual(['room']);
+  });
+
+  it('search_maps is deliberately renamed search_map_catalogs (ticket 24): same schema, old name gone', async () => {
+    const res = await rpc('tools/list', {}, { 'mcp-session-id': await newSession() });
+    const byName = Object.fromEntries((await res.json()).result.tools.map((t) => [t.name, t.inputSchema]));
+
+    // The fixture records the rename; the server serves search_maps' arguments under the new name only.
+    expect(prototypeTools.filter((t) => t.renamedFrom).map((t) => [t.renamedFrom, t.name])).toEqual([['search_maps', 'search_map_catalogs']]);
+    expect(Object.keys(byName.search_map_catalogs.properties)).toEqual(['source', 'query', 'limit']);
+    expect(byName.search_maps).toBeUndefined();
   });
 });
 
@@ -229,6 +241,7 @@ describe('toolCall notice', () => {
     ['set_track_autoscale', { track: 'genes', enabled: true }, CommandType.SET_TRACK_AUTOSCALE],
     ['set_track_log_scale', { track: 'genes', enabled: true }, CommandType.SET_TRACK_LOG_SCALE],
     ['goto_locus', { locus: 'chr1' }, CommandType.GOTO_LOCUS],
+    ['close_panel', { panel: 2 }, CommandType.CLOSE_PANEL],
   ];
 
   it.each(commandTools)('%s sends toolCall {name} to every page before its command', async (name, args, type) => {
@@ -255,7 +268,7 @@ describe('toolCall notice', () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('')); // the search tools' catalogs
 
     for (const [name, args] of [
-      ['search_maps', { query: 'GM12878' }],
+      ['search_map_catalogs', { query: 'GM12878' }],
       ['get_data_source_statistics', { source: '4dn' }],
       ['get_map_details', { source: '4dn', index: 0 }],
       ['list_data_sources', {}],
@@ -442,6 +455,268 @@ describe('request tools', () => {
 
     expect(result.isError).toBe(true);
     expect(text(result)).toMatch(/disconnected/i);
+  });
+});
+
+describe('panels (ADR-0007)', () => {
+  /** Every tool that acts on one panel, with arguments it accepts besides `panel`. */
+  const panelTools = [
+    ['load_map', { url: 'https://example.org/a.hic' }],
+    ['load_control_map', { url: 'https://example.org/b.hic' }],
+    ['close_panel', {}],
+    ['zoom_in', {}],
+    ['zoom_out', {}],
+    ['set_map_foreground_color', { color: '#ff0000' }],
+    ['set_map_background_color', { color: '#ffffff' }],
+    ['set_color_scale', { action: 'increase' }],
+    ['load_track', { url: 'genes' }],
+    ['select_normalization', { normalization: 'KR' }],
+    ['remove_track', { track: 'genes' }],
+    ['set_track_color', { track: 'genes', color: '#00ff00' }],
+    ['set_track_name', { track: 'genes', name: 'RefSeq' }],
+    ['set_track_data_range', { track: 'genes', min: 0, max: 10 }],
+    ['set_track_autoscale', { track: 'genes', enabled: true }],
+    ['set_track_log_scale', { track: 'genes', enabled: true }],
+    ['goto_locus', { locus: 'chr1' }],
+  ];
+
+  /** Call `name`, answer its command with an ok ack carrying `result`; {command, result}. */
+  async function commandFor(name, args, result) {
+    const session = await newSession();
+    const page = await pageIn(session);
+    const call = callTool(session, name, args);
+    const command = await nextCommand(page);
+    page.send({ type: MessageType.ACK, requestId: command.requestId, ok: true, result });
+    return { command, result: await call };
+  }
+
+  it.each(panelTools)('%s passes a position, a name or "all" through to the page unchanged', async (name, args) => {
+    for (const panel of [2, 'heart', 'all']) {
+      const { command } = await commandFor(name, { ...args, panel });
+      expect(command.panel, `${name} panel ${panel}`).toBe(panel);
+    }
+  });
+
+  it('a command without panel sends none; the page decides (one panel: the current one)', async () => {
+    const { command } = await commandFor('goto_locus', { locus: 'chr1' });
+
+    expect('panel' in command).toBe(false);
+  });
+
+  it('the ack\'s per-panel lines follow the tool text', async () => {
+    const lines = 'panel 1 (heart, mm10): ok\npanel 2 (colon, GRCh38): No map loaded';
+    const { result } = await commandFor('goto_locus', { locus: 'MYC', panel: 'all' }, lines);
+
+    expect(result.isError).toBeFalsy();
+    expect(text(result)).toBe(`Navigating to locus: MYC\n${lines}`);
+  });
+
+  it('load_map {panel: "new"} asks for a new panel and answers with the page\'s "loaded … into panel N of M"', async () => {
+    const url = 'https://example.org/heart.hic';
+    const { command, result } = await commandFor('load_map', { url, locus: 'chr8:127000000-129000000', panel: 'new' },
+      'loaded heart into panel 2 of 2 (heart, mm10)');
+
+    expect(command).toEqual({ type: CommandType.LOAD_MAP, url, locus: 'chr8:127000000-129000000', panel: 'new', requestId: expect.any(String) });
+    expect(text(result)).toBe(`Loading map from ${url} in a new panel\nloaded heart into panel 2 of 2 (heart, mm10)`);
+  });
+
+  it('close_panel sends closePanel {panel} and answers with the remaining numbering', async () => {
+    const { command, result } = await commandFor('close_panel', { panel: 'heart' },
+      'closed panel 1 (heart, mm10); remaining: 1 (colon, GRCh38)');
+
+    expect(command).toEqual({ type: CommandType.CLOSE_PANEL, panel: 'heart', requestId: expect.any(String) });
+    expect(text(result)).toBe('Closing panel\nclosed panel 1 (heart, mm10); remaining: 1 (colon, GRCh38)');
+  });
+
+  it('a page error (e.g. panel omitted with two open) comes back as the tool error', async () => {
+    const session = await newSession();
+    const page = await pageIn(session);
+    const error = '2 panels open; say panel: 1 (heart, mm10) | 2 (colon, GRCh38) | all';
+
+    const call = callTool(session, 'load_track', { url: 'genes' });
+    const command = await nextCommand(page);
+    page.send({ type: MessageType.ACK, requestId: command.requestId, ok: false, error });
+    const result = await call;
+
+    expect(result.isError).toBe(true);
+    expect(text(result)).toBe(`Error: ${error}`);
+  });
+
+  it('list_panels asks one page for getPanelList and returns its list as JSON', async () => {
+    const session = await newSession();
+    const page = await pageIn(session);
+    const panels = [
+      { panel: 1, current: false, map: 'heart', genome: 'mm10', controlMap: null, tracks: 2, locus: 'All' },
+      { panel: 2, current: true, map: 'colon', genome: 'GRCh38', controlMap: null, tracks: 0, locus: 'chr8:1-2 chr8:1-2' },
+    ];
+
+    const call = callTool(session, 'list_panels');
+    const request = await page.next();
+    page.send({ type: MessageType.ACK, requestId: request.requestId, ok: true, result: panels });
+    const result = await call;
+
+    expect(request).toEqual({ type: CommandType.GET_PANEL_LIST, requestId: expect.any(String) });
+    expect(text(result)).toBe(JSON.stringify(panels, null, 2));
+  });
+
+  it('juicebox_help shows side by side, per-panel tracks, "all" and closing a panel', async () => {
+    const help = text(await callTool(await newSession(), 'juicebox_help'));
+
+    expect(help).toContain('"Load a heart and a colon intact Hi-C map from ENCODE side by side"');
+    expect(help).toContain('"Load CTCF into the heart panel"');
+    expect(help).toContain('"Go to MYC on both panels"');
+    expect(help).toContain('"Close the heart panel"');
+  });
+
+  it('list_tracks {panel} asks the page for that panel\'s tracks', async () => {
+    const session = await newSession();
+    const page = await pageIn(session);
+
+    for (const panel of [2, 'colon']) {
+      const call = callTool(session, 'list_tracks', { panel });
+      const request = await page.next();
+      page.send({ type: MessageType.ACK, requestId: request.requestId, ok: true, result: [] });
+      await call;
+
+      expect(request).toEqual({ type: CommandType.GET_TRACK_LIST, panel, requestId: expect.any(String) });
+    }
+  });
+});
+
+describe('ENCODE portal search (search_encode_hic, search_encode)', () => {
+  const portal = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
+  const NO_HITS = { '@graph': [], total: 0, facets: [] }; // the portal's zero-hit answer, with HTTP 404
+  const params = (spy, call = 0) => new URL(spy.mock.calls[call][0]).searchParams;
+
+  it('search_encode_hic asks for released Hi-C experiments of an organ, with an explicit non-browser User-Agent', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => portal(heartHic));
+
+    await callTool(await newSession(), 'search_encode_hic', { biosample: 'heart', classification: 'tissue', assembly: 'GRCh38' });
+
+    expect(fetchSpy).toHaveBeenCalledOnce();
+    const [url, init] = fetchSpy.mock.calls[0];
+    expect(url.startsWith('https://www.encodeproject.org/search/?')).toBe(true);
+    const q = params(fetchSpy);
+    expect(q.get('type')).toBe('Experiment');
+    expect(q.get('format')).toBe('json');
+    expect(q.get('status')).toBe('released');
+    expect(q.getAll('assay_title')).toEqual(['intact Hi-C', 'in situ Hi-C', 'Hi-C', 'dilution Hi-C']);
+    expect(q.get('biosample_ontology.organ_slims')).toBe('heart');
+    expect(q.get('biosample_ontology.classification')).toBe('tissue');
+    expect(q.get('assembly')).toBe('GRCh38');
+    expect(q.getAll('field')).toEqual(expect.arrayContaining(['files.href', 'files.file_format', 'files.output_type', 'files.status']));
+    expect(init.headers['user-agent']).toMatch(/Juicebox-MCP/);
+    expect(init.headers['user-agent']).not.toMatch(/Chrome|Safari/); // a spoofed browser UA gets 502 from the portal's WAF
+  });
+
+  it('search_encode_hic lists released maps (MAPQ-thresholded first) and loadable track files, and drops experiments without released maps', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async () => portal(heartHic));
+
+    const result = await callTool(await newSession(), 'search_encode_hic', { biosample: 'heart' });
+    const [summary, json] = text(result).split('\n\n[Structured data]\n');
+
+    expect(result.isError).toBeFalsy();
+    expect(summary).toBe([
+      '1 of 38 released ENCODE Hi-C experiments (organ "heart") (1 without released maps omitted):',
+      '',
+      '1. ENCSR000HRT — intact Hi-C — Homo sapiens heart left ventricle tissue male adult (51 years) [tissue; GRCh38; Erez Aiden, BCM]',
+      '   map: mapping quality thresholded contact matrix (GRCh38, rep 1 27.8 GB) https://www.encodeproject.org/files/ENCFF002MQ/@@download/ENCFF002MQ.hic',
+      '   map: contact matrix (GRCh38, rep 1 31.4 GB) https://www.encodeproject.org/files/ENCFF001CM/@@download/ENCFF001CM.hic',
+      '   tracks (3, urls in the JSON): bedpe: contact domains, loops; bigWig: genome compartments',
+    ].join('\n'));
+    const [experiment] = JSON.parse(json);
+    expect(experiment.maps.map((m) => m.url)).toEqual([
+      'https://www.encodeproject.org/files/ENCFF002MQ/@@download/ENCFF002MQ.hic',
+      'https://www.encodeproject.org/files/ENCFF001CM/@@download/ENCFF001CM.hic',
+    ]);
+    expect(experiment.tracks).toEqual([
+      { url: 'https://www.encodeproject.org/files/ENCFF005CD/@@download/ENCFF005CD.bedpe.gz', format: 'bedpe', outputType: 'contact domains', assembly: 'GRCh38', replicates: [1] },
+      { url: 'https://www.encodeproject.org/files/ENCFF004LP/@@download/ENCFF004LP.bedpe.gz', format: 'bedpe', outputType: 'loops', assembly: 'GRCh38', replicates: [1] },
+      { url: 'https://www.encodeproject.org/files/ENCFF006SC/@@download/ENCFF006SC.bigWig', format: 'bigWig', outputType: 'genome compartments', assembly: 'GRCh38', replicates: [1] },
+    ]);
+  });
+
+  it('search_encode_hic with one assay asks for that assay only', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => portal(heartHic));
+
+    await callTool(await newSession(), 'search_encode_hic', { biosample: 'heart', assay: 'intact Hi-C' });
+
+    expect(params(fetchSpy).getAll('assay_title')).toEqual(['intact Hi-C']);
+  });
+
+  it('a biosample that is no organ (portal 404, total 0) falls back to the full-text search', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch')
+      .mockImplementationOnce(async () => portal(NO_HITS, 404))
+      .mockImplementationOnce(async () => portal(heartHic));
+
+    const result = await callTool(await newSession(), 'search_encode_hic', { biosample: 'K562' });
+
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    expect(params(fetchSpy, 0).get('biosample_ontology.organ_slims')).toBe('K562');
+    expect(params(fetchSpy, 1).has('biosample_ontology.organ_slims')).toBe(false);
+    expect(params(fetchSpy, 1).get('searchTerm')).toBe('K562');
+    expect(text(result)).toMatch(/^1 of 38 released ENCODE Hi-C experiments \(text "K562"\)/);
+  });
+
+  it('no hits either way answers that nothing was found, not an error', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async () => portal(NO_HITS, 404));
+
+    const result = await callTool(await newSession(), 'search_encode_hic', { biosample: 'spleen' });
+
+    expect(result.isError).toBeFalsy();
+    expect(text(result)).toBe('No released ENCODE Hi-C experiments with maps found (text "spleen").');
+  });
+
+  it('a portal failure (e.g. 502 from its bot filter) is a tool error naming the status', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async () => new Response('<html>Bad Gateway</html>', { status: 502 }));
+
+    const result = await callTool(await newSession(), 'search_encode_hic', { biosample: 'heart' });
+
+    expect(result.isError).toBe(true);
+    expect(text(result)).toMatch(/^Error searching the ENCODE portal: ENCODE portal answered 502 for https:\/\/www\.encodeproject\.org\/search\/\?/);
+  });
+
+  it('search_encode passes facet filters through verbatim (a list repeats the key) and lists hits with links and facets', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => portal(ctcfSearch));
+
+    const result = await callTool(await newSession(), 'search_encode', {
+      query: 'heart',
+      filters: { assay_title: 'TF ChIP-seq', 'target.label': 'CTCF', 'biosample_ontology.classification': ['tissue', 'primary cell'] },
+      limit: 5,
+    });
+
+    const q = params(fetchSpy);
+    expect(q.get('type')).toBe('Experiment');
+    expect(q.get('searchTerm')).toBe('heart');
+    expect(q.get('limit')).toBe('5');
+    expect(q.get('status')).toBe('released');
+    expect(q.get('assay_title')).toBe('TF ChIP-seq');
+    expect(q.get('target.label')).toBe('CTCF');
+    expect(q.getAll('biosample_ontology.classification')).toEqual(['tissue', 'primary cell']);
+    const [head, hits, facets] = text(result).split('\n\n');
+    expect(head).toBe(`2 of 38 Experiment hits on the ENCODE portal\n${fetchSpy.mock.calls[0][0]}`);
+    expect(hits).toBe([
+      '- ENCSR000CTC — TF ChIP-seq — Homo sapiens heart left ventricle tissue female adult (53 years) — target CTCF — Michael Snyder, Stanford — CTCF ChIP-seq on human heart left ventricle',
+      '  https://www.encodeproject.org/experiments/ENCSR000CTC/',
+      '- ENCFF009BW — bigWig fold change over control — GRCh38',
+      '  https://www.encodeproject.org/files/ENCFF009BW/@@download/ENCFF009BW.bigWig',
+    ].join('\n'));
+    expect(facets).toBe([
+      'Facets (narrow with filters):',
+      'Object type: Experiment (38)',
+      'Biosample: heart left ventricle (21), right atrium auricular region (17)',
+    ].join('\n'));
+  });
+
+  it('search_encode with a status filter does not add status=released', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => portal(NO_HITS, 404));
+
+    const result = await callTool(await newSession(), 'search_encode', { type: 'File', filters: { status: 'archived' } });
+
+    expect(params(fetchSpy).getAll('status')).toEqual(['archived']);
+    expect(params(fetchSpy).get('type')).toBe('File');
+    expect(text(result)).toMatch(/^0 of 0 File hits on the ENCODE portal\n/);
+    expect(text(result)).toContain('(none)');
   });
 });
 

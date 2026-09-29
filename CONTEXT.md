@@ -36,6 +36,10 @@ _Avoid_: client (alone), Claude
 One web-browser tab hosting juicebox.js.
 _Avoid_: browser (in juicebox.js a browser is a HiCBrowser panel), client
 
+**Panel**:
+One juicebox.js contact-map viewer inside a page (a HiCBrowser). A page holds one or more panels, ordered left to right; tools address one by its 1-based position in that order, or by its map name when unique, or all at once.
+_Avoid_: browser, map (the .hic file), view
+
 **Host**:
 The shell or site that embeds juicebox.js and attaches a remote: juicebox-web, embed.html, any third-party site.
 _Avoid_: frontend, app

@@ -82,6 +82,7 @@ function fakeHic({ mapLoaded = true, trackPairs = [], tracks2D = [] } = {}) {
   return {
     EventBus: { globalBus: { subscribe() {}, unsubscribe() {} } },
     getCurrentBrowser: vi.fn(() => browser),
+    getAllBrowsers: vi.fn(() => [browser]),
     restoreSession: vi.fn(async () => {}),
     toJSON: vi.fn(() => ({ browsers: [{ url: 'https://maps.example/a.hic', tracks: [] }] })),
     compressedSession: vi.fn(() => 'session=blob:abc123'),
@@ -332,13 +333,16 @@ describe('attachRemote: arguments', () => {
   });
 });
 
+// How a command's ack names the fake's one panel, whose dataset has no name or genome.
+const PANEL_1 = 'panel 1 (undefined, undefined)';
+
 describe('attachRemote: view commands', () => {
   it('gotoLocus calls parseGotoInput with the locus and acks ok', async () => {
     const fake = fakeHic();
     const { send } = await joinedWith(fake);
     const ack = await send({ type: 'gotoLocus', requestId: 'q1', locus: 'chr1:10mb-20mb' });
     expect(fake.browser.parseGotoInput).toHaveBeenCalledWith('chr1:10mb-20mb');
-    expect(ack).toEqual({ type: 'ack', requestId: 'q1', ok: true });
+    expect(ack).toEqual({ type: 'ack', requestId: 'q1', ok: true, result: `${PANEL_1}: ok` });
   });
 });
 
@@ -347,7 +351,7 @@ describe('attachRemote: command failures', () => {
     const fake = fakeHic({ mapLoaded: false });
     const { send } = await joinedWith(fake);
     const ack = await send({ type: 'gotoLocus', requestId: 'q2', locus: 'chr1' });
-    expect(ack).toEqual({ type: 'ack', requestId: 'q2', ok: false, error: 'No map loaded' });
+    expect(ack).toEqual({ type: 'ack', requestId: 'q2', ok: false, error: 'panel 1 (no map): No map loaded' });
     expect(fake.browser.parseGotoInput).not.toHaveBeenCalled();
   });
 
@@ -366,7 +370,7 @@ describe('attachRemote: command failures', () => {
       type: 'ack',
       requestId: 'q4',
       ok: false,
-      error: 'Unrecognized locus: chrZ',
+      error: `${PANEL_1}: Unrecognized locus: chrZ`,
     });
     expect((await send({ type: 'gotoLocus', requestId: 'q5', locus: 'chr1' })).ok).toBe(true);
   });
@@ -378,7 +382,7 @@ describe('attachRemote: command failures', () => {
     });
     const { send } = await joinedWith(fake);
     const ack = await send({ type: 'setNormalization', requestId: 'q6', normalization: 'KR' });
-    expect(ack).toEqual({ type: 'ack', requestId: 'q6', ok: false, error: 'disposed' });
+    expect(ack).toEqual({ type: 'ack', requestId: 'q6', ok: false, error: `${PANEL_1}: disposed` });
   });
 
   it('a non-command message carrying a requestId (e.g. an ack) is not acked back', async () => {
@@ -405,7 +409,12 @@ describe('attachRemote: §5.2 view command rows', () => {
     const cmd = { url: 'https://maps.example/b.hic', name: 'B', normalization: 'KR', locus: 'chr1 chr1' };
     const ack = await send({ type: 'loadMap', requestId: 'm1', ...cmd });
     expect(fake.browser.loadHicFile).toHaveBeenCalledWith(cmd);
-    expect(ack).toEqual({ type: 'ack', requestId: 'm1', ok: true });
+    expect(ack).toEqual({
+      type: 'ack',
+      requestId: 'm1',
+      ok: true,
+      result: `loaded ${cmd.url} into panel 1 of 1 (undefined, undefined)`,
+    });
   });
 
   it('loadControlMap with a base map present loads it and sets display mode AOB', async () => {
@@ -561,7 +570,12 @@ describe('attachRemote: §5.2 track command rows', () => {
         format: 'refgene',
       },
     ]);
-    expect(ack).toEqual({ type: 'ack', requestId: 'l1', ok: true });
+    expect(ack).toEqual({
+      type: 'ack',
+      requestId: 'l1',
+      ok: true,
+      result: `${PANEL_1}: ok`,
+    });
   });
 
   it('loadTrack with only a url passes only the url', async () => {
@@ -575,7 +589,7 @@ describe('attachRemote: §5.2 track command rows', () => {
     const fake = fakeHic({ mapLoaded: false });
     const { send } = await joinedWith(fake);
     const ack = await send({ type: 'loadTrack', requestId: 'l3', url: 'https://tracks.example/a.bw' });
-    expect(ack).toEqual({ type: 'ack', requestId: 'l3', ok: false, error: 'No map loaded' });
+    expect(ack).toEqual({ type: 'ack', requestId: 'l3', ok: false, error: 'panel 1 (no map): No map loaded' });
     expect(fake.browser.loadTracks).not.toHaveBeenCalled();
   });
 
@@ -634,7 +648,7 @@ describe('attachRemote: §5.2 track command rows', () => {
     const fake = fakeHic({ trackPairs: [tp], tracks2D: [fakeTrack2D('loops')] });
     const { send } = await joinedWith(fake);
     const ack = await send({ type: 'removeTrack', requestId: 'u1', track });
-    expect(ack).toEqual({ type: 'ack', requestId: 'u1', ok: false, error: `Track not found: ${track}` });
+    expect(ack).toEqual({ type: 'ack', requestId: 'u1', ok: false, error: `${PANEL_1}: Track not found: ${track}` });
     const colorAck = await send({ type: 'setTrackColor', requestId: 'u2', track, color: { r: 1, g: 2, b: 3 } });
     expect(colorAck.ok).toBe(false);
     expect(fake.browser.layoutController.removeTrackXYPair).not.toHaveBeenCalled();
@@ -684,7 +698,7 @@ describe('attachRemote: §5.2 track command rows', () => {
         type: 'ack',
         requestId: 'x1',
         ok: false,
-        error: `Track loops is a 2D track; ${type} does not apply to 2D tracks`,
+        error: `${PANEL_1}: Track loops is a 2D track; ${type} does not apply to 2D tracks`,
       });
     },
   );
@@ -692,7 +706,7 @@ describe('attachRemote: §5.2 track command rows', () => {
   it('a track command before any map is loaded acks ok:false', async () => {
     const { send } = await joinedWith(fakeHic({ mapLoaded: false }));
     const ack = await send({ type: 'removeTrack', requestId: 'm1', track: '1' });
-    expect(ack).toEqual({ type: 'ack', requestId: 'm1', ok: false, error: 'No map loaded' });
+    expect(ack).toEqual({ type: 'ack', requestId: 'm1', ok: false, error: 'panel 1 (no map): No map loaded' });
   });
 });
 

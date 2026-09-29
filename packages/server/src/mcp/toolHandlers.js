@@ -12,6 +12,7 @@ import { parseDataSource } from '../search/dataParsers.js';
 import { filterMaps } from '../search/mapFilter.js';
 import { formatSearchResults, formatSearchResultsJSON } from '../search/resultFormatter.js';
 import { generateQRPng } from '../qrPng.js';
+import { hicExperiments, formatHicExperiments, encodeSearch, formatEncodeSearch, HIC_ASSAYS, CLASSIFICATIONS } from '../search/encodePortal.js';
 import { VIEW_URI, VIEW_HTML, VIEW_META, VIEW_MIME_TYPE, TOOL_META } from './juiceboxView.js';
 
 // Helper function to convert hex color to RGB
@@ -30,6 +31,10 @@ const ROOM_ID = /^[0-9A-HJKMNP-TV-Z]{10}$/i;
 // Zod schema for color input
 const colorSchema = z.string().regex(/^#[0-9A-Fa-f]{6}$/, 'Must be a hex color code (e.g., "#ff0000")')
   .describe('Hex color code (e.g., "#ff0000")');
+const panelSchema = z.union([z.number().int().positive(), z.string()]).optional()
+  .describe('panel: position from the left (1, 2, ...), a map name, or "all"; required when more than one panel is open');
+const onePanelSchema = z.union([z.number().int().positive(), z.string()]).optional()
+  .describe('panel: position from the left (1, 2, ...) or a map name, no "all"; required when more than one panel is open');
 
 /**
  * Register all MCP tools on the given server instance.
@@ -78,15 +83,16 @@ export function registerTools(mcpServer, deps) {
     if (!outcome.ok) {
       return { content: [{ type: 'text', text: `Error: ${outcome.error || `the page could not apply ${command.type}`}` }], isError: true };
     }
-    return { content: [{ type: 'text', text }] };
+    // A command's ack carries one line per panel it acted on (ADR-0007).
+    return { content: [{ type: 'text', text: typeof outcome.result === 'string' ? `${text}\n${outcome.result}` : text }] };
   }
 
   /**
    * Ask the first live page in the bound room for data (design §6) and resolve
    * {result} from its ack, or {error} with the tool result to return instead.
    */
-  async function runRequest(type) {
-    const outcome = await sendRequest({ type });
+  async function runRequest(type, payload = {}) {
+    const outcome = await sendRequest({ type, ...payload });
     const fail = (text) => ({ error: { content: [{ type: 'text', text: `Error: ${text}` }], isError: true } });
     if (outcome.status === 'no-page') return fail(NO_PAGE);
     if (outcome.status === 'unconfirmed') return fail('the page did not answer within 10 s.');
@@ -117,16 +123,30 @@ export function registerTools(mcpServer, deps) {
     'load_map',
     {
       title: 'Load Map',
-      description: 'Load a Hi-C contact map (.hic file) into Juicebox',
+      description: 'Load a Hi-C contact map (.hic file) into Juicebox. With panel "new" the map opens in an additional panel beside the current one (side by side); otherwise it replaces the map in the panel named by `panel`, which is required when more than one panel is open.',
       inputSchema: {
         url: z.string().url().describe('URL to the .hic file'),
         name: z.string().optional().describe('Optional name for the map'),
         normalization: z.string().optional().describe('Normalization method (e.g., "VC", "VC_SQRT", "KR", "NONE")'),
-        locus: z.string().optional().describe('Optional genomic locus (e.g., "1:1000000-2000000 1:1000000-2000000")')
+        locus: z.string().optional().describe('Optional genomic locus (e.g., "1:1000000-2000000 1:1000000-2000000")'),
+        panel: z.union([z.number().int().positive(), z.string()]).optional().describe('panel: "new" opens another panel beside the others and loads there (side-by-side comparisons); a position from the left (1, 2, ...) or a map name replaces that panel\'s map, no "all"; required when more than one panel is open')
       }
     },
-    async ({ url, name, normalization, locus }) => {
-      return runCommand('load_map', { type: 'loadMap', url, name, normalization, locus }, `Loading map from ${url}${name ? ` (${name})` : ''}`);
+    async ({ url, name, normalization, locus, panel }) => {
+      return runCommand('load_map', { type: 'loadMap', url, name, normalization, locus, panel }, `Loading map from ${url}${name ? ` (${name})` : ''}${panel === 'new' ? ' in a new panel' : ''}`);
+    }
+  );
+
+  // --- Tool: close_panel ---
+  mcpServer.registerTool(
+    'close_panel',
+    {
+      title: 'Close Panel',
+      description: 'Close one panel (contact-map viewer) of the page; the panels to its right move one position left. The last panel cannot be closed.',
+      inputSchema: { panel: onePanelSchema }
+    },
+    async ({ panel }) => {
+      return runCommand('close_panel', { type: 'closePanel', panel }, 'Closing panel');
     }
   );
 
@@ -139,11 +159,12 @@ export function registerTools(mcpServer, deps) {
       inputSchema: {
         url: z.string().url().describe('URL to the control .hic file'),
         name: z.string().optional().describe('Optional name for the control map'),
-        normalization: z.string().optional().describe('Normalization method (e.g., "VC", "VC_SQRT", "KR", "NONE")')
+        normalization: z.string().optional().describe('Normalization method (e.g., "VC", "VC_SQRT", "KR", "NONE")'),
+        panel: onePanelSchema
       }
     },
-    async ({ url, name, normalization }) => {
-      return runCommand('load_control_map', { type: 'loadControlMap', url, name, normalization }, `Loading control map from ${url}${name ? ` (${name})` : ''}`);
+    async ({ url, name, normalization, panel }) => {
+      return runCommand('load_control_map', { type: 'loadControlMap', url, name, normalization, panel }, `Loading control map from ${url}${name ? ` (${name})` : ''}`);
     }
   );
 
@@ -212,11 +233,12 @@ export function registerTools(mcpServer, deps) {
       description: 'Zoom in on the contact map',
       inputSchema: {
         centerX: z.number().optional().describe('Optional X coordinate for zoom center (pixels)'),
-        centerY: z.number().optional().describe('Optional Y coordinate for zoom center (pixels)')
+        centerY: z.number().optional().describe('Optional Y coordinate for zoom center (pixels)'),
+        panel: panelSchema
       }
     },
-    async ({ centerX, centerY }) => {
-      return runCommand('zoom_in', { type: 'zoomIn', centerX, centerY }, 'Zooming in');
+    async ({ centerX, centerY, panel }) => {
+      return runCommand('zoom_in', { type: 'zoomIn', centerX, centerY, panel }, 'Zooming in');
     }
   );
 
@@ -228,11 +250,12 @@ export function registerTools(mcpServer, deps) {
       description: 'Zoom out on the contact map',
       inputSchema: {
         centerX: z.number().optional().describe('Optional X coordinate for zoom center (pixels)'),
-        centerY: z.number().optional().describe('Optional Y coordinate for zoom center (pixels)')
+        centerY: z.number().optional().describe('Optional Y coordinate for zoom center (pixels)'),
+        panel: panelSchema
       }
     },
-    async ({ centerX, centerY }) => {
-      return runCommand('zoom_out', { type: 'zoomOut', centerX, centerY }, 'Zooming out');
+    async ({ centerX, centerY, panel }) => {
+      return runCommand('zoom_out', { type: 'zoomOut', centerX, centerY, panel }, 'Zooming out');
     }
   );
 
@@ -244,15 +267,16 @@ export function registerTools(mcpServer, deps) {
       description: 'Set the foreground color scale for the contact map',
       inputSchema: {
         color: colorSchema,
-        threshold: z.number().positive().optional().describe('Optional threshold value for the color scale')
+        threshold: z.number().positive().optional().describe('Optional threshold value for the color scale'),
+        panel: panelSchema
       }
     },
-    async ({ color, threshold }) => {
+    async ({ color, threshold, panel }) => {
       const rgb = hexToRgb(color);
       if (!rgb) {
         return { content: [{ type: 'text', text: `Invalid color: ${color}. Please use a hex code (e.g., "#ff0000")` }], isError: true };
       }
-      return runCommand('set_map_foreground_color', { type: 'setForegroundColor', color: rgb, threshold }, `Map foreground color set to ${color}${threshold ? ` with threshold ${threshold}` : ''}`);
+      return runCommand('set_map_foreground_color', { type: 'setForegroundColor', color: rgb, threshold, panel }, `Map foreground color set to ${color}${threshold ? ` with threshold ${threshold}` : ''}`);
     }
   );
 
@@ -262,14 +286,14 @@ export function registerTools(mcpServer, deps) {
     {
       title: 'Set Map Background Color',
       description: 'Set the background color of the contact map',
-      inputSchema: { color: colorSchema }
+      inputSchema: { color: colorSchema, panel: panelSchema }
     },
-    async ({ color }) => {
+    async ({ color, panel }) => {
       const rgb = hexToRgb(color);
       if (!rgb) {
         return { content: [{ type: 'text', text: `Invalid color: ${color}. Please use a hex code (e.g., "#000000")` }], isError: true };
       }
-      return runCommand('set_map_background_color', { type: 'setBackgroundColor', color: rgb }, `Map background color set to ${color}`);
+      return runCommand('set_map_background_color', { type: 'setBackgroundColor', color: rgb, panel }, `Map background color set to ${color}`);
     }
   );
 
@@ -281,15 +305,16 @@ export function registerTools(mcpServer, deps) {
       description: 'Adjust the color scale (threshold) of the contact map. Use "increase" to double the threshold (lighter), "decrease" to halve it (darker), or set an exact numeric value.',
       inputSchema: {
         action: z.enum(['increase', 'decrease', 'set']).describe('Action: "increase" doubles the threshold, "decrease" halves it, "set" uses the provided value'),
-        value: z.number().positive().optional().describe('Exact threshold value (required when action is "set")')
+        value: z.number().positive().optional().describe('Exact threshold value (required when action is "set")'),
+        panel: panelSchema
       }
     },
-    async ({ action, value }) => {
+    async ({ action, value, panel }) => {
       if (action === 'set' && (value === undefined || value === null)) {
         return { content: [{ type: 'text', text: 'A positive numeric value is required when action is "set"' }], isError: true };
       }
       const desc = action === 'set' ? `set to ${value}` : action === 'increase' ? 'increased (doubled)' : 'decreased (halved)';
-      return runCommand('set_color_scale', { type: 'setColorScale', action, value }, `Color scale threshold ${desc}`);
+      return runCommand('set_color_scale', { type: 'setColorScale', action, value, panel }, `Color scale threshold ${desc}`);
     }
   );
 
@@ -313,10 +338,11 @@ export function registerTools(mcpServer, deps) {
       inputSchema: {
         url: z.string().describe('URL to the track file (e.g., bigWig, bigBed, bed, bedpe), or the keyword "genes" for the built-in gene track'),
         name: z.string().optional().describe('Optional display name for the track'),
-        color: colorSchema.optional().describe('Optional track color as hex code (e.g., "#ff0000")')
+        color: colorSchema.optional().describe('Optional track color as hex code (e.g., "#ff0000")'),
+        panel: z.union([z.number().int().positive(), z.string()]).optional().describe('panel: position from the left (1, 2, ...), a map name, or "all"; required when more than one panel is open')
       }
     },
-    async ({ url, name, color }) => {
+    async ({ url, name, color, panel }) => {
       const preset = TRACK_PRESETS[url.toLowerCase()];
       const resolvedUrl = preset ? preset.url : url;
       const resolvedName = name || (preset ? preset.name : undefined);
@@ -326,6 +352,7 @@ export function registerTools(mcpServer, deps) {
       if (resolvedColor) command.color = resolvedColor;
       if (preset?.type) command.trackType = preset.type;
       if (preset?.format) command.format = preset.format;
+      if (panel !== undefined) command.panel = panel;
       return runCommand('load_track', command, `Loading track${resolvedName ? ` "${resolvedName}"` : ''} from ${resolvedUrl}`);
     }
   );
@@ -338,10 +365,11 @@ export function registerTools(mcpServer, deps) {
       description: 'Change the normalization method for the currently loaded Hi-C contact map. This changes the normalization in-place without reloading the map. Available normalizations: NONE (raw counts), VC (Coverage), VC_SQRT (Coverage-Sqrt), KR (Balanced / Knight-Ruiz matrix balancing), SCALE, INTER_SCALE, GW_SCALE. The user may refer to normalizations by either their internal name or their visual/spoken name.',
       inputSchema: {
         normalization: z.string()
-          .describe('Normalization method. Common values: NONE (raw counts), VC (Coverage), VC_SQRT (Coverage-Sqrt), KR (Balanced / Knight-Ruiz), SCALE, INTER_SCALE, GW_SCALE. The available normalizations depend on the loaded map.')
+          .describe('Normalization method. Common values: NONE (raw counts), VC (Coverage), VC_SQRT (Coverage-Sqrt), KR (Balanced / Knight-Ruiz), SCALE, INTER_SCALE, GW_SCALE. The available normalizations depend on the loaded map.'),
+        panel: panelSchema
       }
     },
-    async ({ normalization }) => {
+    async ({ normalization, panel }) => {
       const normNames = {
         NONE: 'None',
         VC: 'Coverage (VC)',
@@ -351,7 +379,7 @@ export function registerTools(mcpServer, deps) {
         INTER_SCALE: 'INTER_SCALE',
         GW_SCALE: 'GW_SCALE'
       };
-      return runCommand('select_normalization', { type: 'setNormalization', normalization }, `Normalization set to ${normNames[normalization] || normalization}`);
+      return runCommand('select_normalization', { type: 'setNormalization', normalization, panel }, `Normalization set to ${normNames[normalization] || normalization}`);
     }
   );
 
@@ -361,15 +389,30 @@ export function registerTools(mcpServer, deps) {
     {
       title: 'List Tracks',
       description: 'List all loaded 1D and 2D tracks in the current Juicebox session, including their names, types, colors, data ranges, and display settings.',
-      inputSchema: {}
+      inputSchema: { panel: onePanelSchema }
     },
-    async () => {
-      const { result: tracks, error } = await runRequest('getTrackList');
+    async ({ panel }) => {
+      const { result: tracks, error } = await runRequest('getTrackList', { panel });
       if (error) return error;
       if (!tracks || tracks.length === 0) {
         return { content: [{ type: 'text', text: 'No tracks loaded.' }] };
       }
       return { content: [{ type: 'text', text: JSON.stringify(tracks, null, 2) }] };
+    }
+  );
+
+  // --- Tool: list_panels ---
+  mcpServer.registerTool(
+    'list_panels',
+    {
+      title: 'List Panels',
+      description: 'List the panels (contact-map viewers) open in the page, left to right: position, whether it is the current one, map name, genome, control map, track count and locus. Tools that take `panel` address a panel by this position, by its map name, or "all".',
+      inputSchema: {}
+    },
+    async () => {
+      const { result: panels, error } = await runRequest('getPanelList');
+      if (error) return error;
+      return { content: [{ type: 'text', text: JSON.stringify(panels, null, 2) }] };
     }
   );
 
@@ -380,11 +423,12 @@ export function registerTools(mcpServer, deps) {
       title: 'Remove Track',
       description: 'Remove a loaded track from Juicebox by name or index number (use list_tracks to see available tracks).',
       inputSchema: {
-        track: z.string().describe('Track name or 1-based index number')
+        track: z.string().describe('Track name or 1-based index number'),
+        panel: panelSchema
       }
     },
-    async ({ track }) => {
-      return runCommand('remove_track', { type: 'removeTrack', track }, `Removing track: ${track}`);
+    async ({ track, panel }) => {
+      return runCommand('remove_track', { type: 'removeTrack', track, panel }, `Removing track: ${track}`);
     }
   );
 
@@ -396,11 +440,12 @@ export function registerTools(mcpServer, deps) {
       description: 'Set or reset the color of a loaded track. Omit color to reset to default.',
       inputSchema: {
         track: z.string().describe('Track name or 1-based index number'),
-        color: colorSchema.optional().describe('Hex color (e.g., "#ff0000"). Omit to reset to default.')
+        color: colorSchema.optional().describe('Hex color (e.g., "#ff0000"). Omit to reset to default.'),
+        panel: panelSchema
       }
     },
-    async ({ track, color }) => {
-      const command = { type: 'setTrackColor', track };
+    async ({ track, color, panel }) => {
+      const command = { type: 'setTrackColor', track, panel };
       if (color) {
         const rgb = hexToRgb(color);
         if (rgb) command.color = rgb;
@@ -417,11 +462,12 @@ export function registerTools(mcpServer, deps) {
       description: 'Rename a loaded track.',
       inputSchema: {
         track: z.string().describe('Current track name or 1-based index number'),
-        name: z.string().describe('New display name for the track')
+        name: z.string().describe('New display name for the track'),
+        panel: panelSchema
       }
     },
-    async ({ track, name }) => {
-      return runCommand('set_track_name', { type: 'setTrackName', track, name }, `Renaming track "${track}" to "${name}"`);
+    async ({ track, name, panel }) => {
+      return runCommand('set_track_name', { type: 'setTrackName', track, name, panel }, `Renaming track "${track}" to "${name}"`);
     }
   );
 
@@ -434,11 +480,12 @@ export function registerTools(mcpServer, deps) {
       inputSchema: {
         track: z.string().describe('Track name or 1-based index number'),
         min: z.number().describe('Minimum value'),
-        max: z.number().describe('Maximum value')
+        max: z.number().describe('Maximum value'),
+        panel: panelSchema
       }
     },
-    async ({ track, min, max }) => {
-      return runCommand('set_track_data_range', { type: 'setTrackDataRange', track, min, max }, `Setting track "${track}" data range to [${min}, ${max}]`);
+    async ({ track, min, max, panel }) => {
+      return runCommand('set_track_data_range', { type: 'setTrackDataRange', track, min, max, panel }, `Setting track "${track}" data range to [${min}, ${max}]`);
     }
   );
 
@@ -450,11 +497,12 @@ export function registerTools(mcpServer, deps) {
       description: 'Enable or disable autoscale for a 1D track.',
       inputSchema: {
         track: z.string().describe('Track name or 1-based index number'),
-        enabled: z.boolean().default(true).describe('Enable (true) or disable (false) autoscale')
+        enabled: z.boolean().default(true).describe('Enable (true) or disable (false) autoscale'),
+        panel: panelSchema
       }
     },
-    async ({ track, enabled }) => {
-      return runCommand('set_track_autoscale', { type: 'setTrackAutoscale', track, enabled }, `${enabled ? 'Enabling' : 'Disabling'} autoscale for track "${track}"`);
+    async ({ track, enabled, panel }) => {
+      return runCommand('set_track_autoscale', { type: 'setTrackAutoscale', track, enabled, panel }, `${enabled ? 'Enabling' : 'Disabling'} autoscale for track "${track}"`);
     }
   );
 
@@ -466,11 +514,12 @@ export function registerTools(mcpServer, deps) {
       description: 'Enable or disable log scale for a 1D track.',
       inputSchema: {
         track: z.string().describe('Track name or 1-based index number'),
-        enabled: z.boolean().default(true).describe('Enable (true) or disable (false) log scale')
+        enabled: z.boolean().default(true).describe('Enable (true) or disable (false) log scale'),
+        panel: panelSchema
       }
     },
-    async ({ track, enabled }) => {
-      return runCommand('set_track_log_scale', { type: 'setTrackLogScale', track, enabled }, `${enabled ? 'Enabling' : 'Disabling'} log scale for track "${track}"`);
+    async ({ track, enabled, panel }) => {
+      return runCommand('set_track_log_scale', { type: 'setTrackLogScale', track, enabled, panel }, `${enabled ? 'Enabling' : 'Disabling'} log scale for track "${track}"`);
     }
   );
 
@@ -688,6 +737,27 @@ Welcome! You can interact with Juicebox using natural language. Just tell me wha
 - "Remove normalization" or "Set normalization to None"
 - Available: None, Coverage (VC), Coverage-Sqrt (VC_SQRT), Balanced/Knight-Ruiz (KR), SCALE, INTER_SCALE, GW_SCALE
 
+### Side by Side (panels)
+
+Each map can open in its own panel, numbered 1, 2, ... from the left. With more than one panel open, say which one: by number, by map name, or all of them ("both panels" means panel "all").
+
+**Open maps side by side:**
+- "Load a heart and a colon intact Hi-C map from ENCODE side by side"
+- "Open GM12878 next to it at chr8:127-129Mb"
+- "Which panels are open?"
+
+**Per-panel tracks and settings:**
+- "Load CTCF into the heart panel"
+- "Load the gene track in panel 2"
+- "Set the colon colour scale to 50"
+
+**All panels at once:**
+- "Go to MYC on both panels"
+- "Load the gene track in all panels"
+
+**Close a panel:**
+- "Close the heart panel" (the panels to its right move one number left; the last panel stays open)
+
 ### Sessions
 
 **Save and restore:**
@@ -742,7 +812,8 @@ Just ask:
       const formatted = sources.map(source =>
         `${source.name} (${source.id}):\n  Description: ${source.description}\n  Data URL: ${source.url}\n  Available columns: ${source.columns.join(', ')}`
       ).join('\n\n');
-      return { content: [{ type: 'text', text: `Available data sources:\n\n${formatted}` }] };
+      const portal = 'ENCODE portal (live search of encodeproject.org, not a catalog):\n  search_encode_hic — Hi-C experiments with their map and track files (tissues, intact Hi-C, cell lines)\n  search_encode — any other assay, annotation, biosample or publication';
+      return { content: [{ type: 'text', text: `Available data sources:\n\n${formatted}\n\n${portal}` }] };
     }
   );
 
@@ -760,10 +831,11 @@ Just ask:
             start: z.number().optional().describe('Start position in base pairs (1-based)'),
             end: z.number().optional().describe('End position in base pairs (1-based)')
           }).describe('Locus specification as structured object')
-        ]).describe('Locus to navigate to.')
+        ]).describe('Locus to navigate to.'),
+        panel: panelSchema
       }
     },
-    async ({ locus }) => {
+    async ({ locus, panel }) => {
       if (!locus) {
         return { content: [{ type: 'text', text: 'Error: Locus specification is required' }], isError: true };
       }
@@ -777,16 +849,25 @@ Just ask:
       } else {
         locusDisplay = JSON.stringify(locus);
       }
-      return runCommand('goto_locus', { type: 'gotoLocus', locus }, `Navigating to locus: ${locusDisplay}`);
+      return runCommand('goto_locus', { type: 'gotoLocus', locus, panel }, `Navigating to locus: ${locusDisplay}`);
     }
   );
 
-  // --- Tool: search_maps ---
+  // --- Tool: search_map_catalogs (renamed from search_maps, ticket 24) ---
+  // What it does: downloads the two curated igv-data TSV catalogs that juicebox-web's
+  // "load from ENCODE / 4DN" modals use (src/search/catalogs.js), and fuzzy-matches every
+  // whitespace-separated query term (with genome/cell-line synonyms) against the catalog
+  // columns; every term must match somewhere (AND).
+  // Limitations: the catalogs are static lists, not the portals. ENCODE ≈176 rows, cell
+  // lines only (GM12878, HCT116, IMR-90, K562, A549 …) — no tissues, no intact Hi-C;
+  // 4DN ≈600 rows. Broad terms ("human", "hg38") match nearly every row. Output repeats
+  // the rows as a table and as raw JSON, so the default 50 rows are ≈64 KB. Anything the
+  // catalogs lack must go through search_encode_hic / search_encode (live portal).
   mcpServer.registerTool(
-    'search_maps',
+    'search_map_catalogs',
     {
-      title: 'Search Maps',
-      description: 'Search for Hi-C contact maps using natural language queries. Searches across all metadata fields (Assembly, Biosource, Biosample, Description, etc.). Use this when users want to find specific maps, e.g., "human hg38 maps", "mouse cell lines", "K562 cells", etc. NOTE: Results are limited to 50 by default. For statistical questions like "what assemblies are covered" or "how many maps are there", use get_data_source_statistics instead.',
+      title: 'Search Map Catalogs',
+      description: 'Search the two curated contact-map catalogs that ship with juicebox-web (ENCODE: ~176 cell-line maps such as GM12878, HCT116, IMR-90, K562; 4DN: ~600 maps) with natural language, e.g. "human hg38 maps", "mouse cell lines", "K562". This is a static list, NOT the ENCODE or 4DN portal: it has no ENCODE tissues and no intact Hi-C. If a query finds nothing here, or the user asks for tissues, intact Hi-C or anything ENCODE-specific, use search_encode_hic instead. Results are limited to 50 by default. For statistical questions like "what assemblies are covered" or "how many maps are there", use get_data_source_statistics instead.',
       inputSchema: {
         source: z.string().optional().describe("Data source ID ('4dn', 'encode') or 'all' to search all sources. Default: 'all'"),
         query: z.string().describe('Natural language search query (e.g., "human hg38", "mouse cells", "K562")'),
@@ -826,8 +907,60 @@ Just ask:
         const resultText = `${formattedTable}\n\n[Structured data for programmatic access]\n${jsonResults}`;
         return { content: [{ type: 'text', text: resultText }] };
       } catch (error) {
-        log.logError('Error in search_maps tool:', error);
+        log.logError('Error in search_map_catalogs tool:', error);
         return { content: [{ type: 'text', text: `Error searching maps: ${error.message}` }], isError: true };
+      }
+    }
+  );
+
+  // --- Tool: search_encode_hic ---
+  // Live, experiment-first search of the ENCODE portal; the portal quirks it relies on
+  // are documented in src/search/encodePortal.js.
+  mcpServer.registerTool(
+    'search_encode_hic',
+    {
+      title: 'Search ENCODE Hi-C',
+      description: 'Search the live ENCODE portal (encodeproject.org) for Hi-C experiments and list, per experiment, its contact-map files and the companion files the viewer can load as tracks (loops, contact domains and chromatin stripes as bedpe; subcompartments as bed; compartments as bigWig). Use this for any ENCODE map the catalogs do not have: tissues (heart, colon, brain ...), intact Hi-C, specific cell lines. Put organ, tissue or cell-line words in `biosample` (organs match the ontology; other words fall back to text search); ask for "intact Hi-C" with `assay`; set `classification: "tissue"` when the user means tissue rather than a cell line derived from that organ. To load a map pass `maps[].url` to load_map (prefer the "mapping quality thresholded contact matrix", one per biosample); pass `tracks[].url` to load_track. For non-Hi-C questions use search_encode.',
+      inputSchema: {
+        biosample: z.string().optional().describe('Organ, tissue or cell line words, e.g. "heart", "colon", "K562"'),
+        assay: z.enum(HIC_ASSAYS).optional().describe('One Hi-C flavour; default: all of intact Hi-C, in situ Hi-C, Hi-C, dilution Hi-C'),
+        classification: z.enum(CLASSIFICATIONS).optional().describe('Biosample classification, e.g. "tissue" to exclude cell lines derived from the organ'),
+        assembly: z.string().optional().describe('Genome assembly, e.g. "GRCh38", "mm10"'),
+        query: z.string().optional().describe('Free text for the portal full-text search (lab, donor, treatment ...)'),
+        limit: z.number().int().positive().max(50).optional().describe('Maximum experiments to return (default: 10)')
+      }
+    },
+    async ({ biosample, assay, classification, assembly, query, limit = 10 }) => {
+      try {
+        const result = await hicExperiments({ biosample, assay, classification, assembly, searchTerm: query, limit });
+        return { content: [{ type: 'text', text: formatHicExperiments(result) }] };
+      } catch (error) {
+        log.logError('Error in search_encode_hic tool:', error);
+        return { content: [{ type: 'text', text: `Error searching the ENCODE portal: ${error.message}` }], isError: true };
+      }
+    }
+  );
+
+  // --- Tool: search_encode ---
+  mcpServer.registerTool(
+    'search_encode',
+    {
+      title: 'Search ENCODE',
+      description: 'General search of the live ENCODE portal for anything that is not a Hi-C map: other assays (TF ChIP-seq, Histone ChIP-seq, DNase-seq, ATAC-seq, RNA-seq ...), annotations, biosamples, publications. `query` is the portal full-text search; `filters` are portal facet fields passed through verbatim, e.g. {"assay_title": "TF ChIP-seq", "biosample_ontology.organ_slims": "heart", "target.label": "CTCF"}; a list value means any of them. The result lists the hits with their portal links and the facets you can narrow by. For the files of one experiment use type "File" with {"dataset": "/experiments/ENCSRxxxxxx/"}.',
+      inputSchema: {
+        type: z.string().optional().describe('Portal object type: Experiment (default), Annotation, File, Biosample, Publication, ...'),
+        query: z.string().optional().describe('Free text'),
+        filters: z.record(z.union([z.string(), z.array(z.string())])).optional().describe('Facet field → value or list of values, passed to the portal as query parameters'),
+        limit: z.number().int().positive().max(100).optional().describe('Maximum hits to return (default: 20)')
+      }
+    },
+    async ({ type = 'Experiment', query, filters = {}, limit = 20 }) => {
+      try {
+        const result = await encodeSearch({ type, searchTerm: query, filters, limit });
+        return { content: [{ type: 'text', text: formatEncodeSearch(result, { type }) }] };
+      } catch (error) {
+        log.logError('Error in search_encode tool:', error);
+        return { content: [{ type: 'text', text: `Error searching the ENCODE portal: ${error.message}` }], isError: true };
       }
     }
   );
