@@ -185,6 +185,7 @@ function fakeHic() {
     EventBus: { globalBus: bus },
     current: fakeBrowser(bus),
     getCurrentBrowser: () => hic.current,
+    getAllBrowsers: () => [hic.current],
     restoreSession: vi.fn(async () => {}),
     bus,
     newBrowser: () => fakeBrowser(bus),
@@ -649,7 +650,9 @@ describe('sync events: a track this page already has', () => {
     socket.receive({ type: 'loadTrack', requestId: 'c1', url: ctcf.url, name: 'CTCF' });
     socket.receive({ type: 'syncEvent', syncType: 'trackLoad', configs: [{ ...ctcf, format: 'bigwig' }] });
     await settle();
-    expect(acksOf(socket)).toEqual([{ type: 'ack', requestId: 'c1', ok: true }]);
+    expect(acksOf(socket)).toEqual([
+      { type: 'ack', requestId: 'c1', ok: true, result: 'panel 1 (A, undefined): ok' },
+    ]);
     expect(hic.current.loadTracks).toHaveBeenCalledTimes(1);
   });
 
