@@ -20,8 +20,16 @@ export async function applyCommand(hic, container, command) {
 
 // Payload shapes are what the server's tool handlers send (packages/server/src/mcp/toolHandlers.js).
 const appliers = {
-  [CommandType.LOAD_MAP]: async ({ url, name, normalization, locus }, { hic }) => {
-    await currentBrowser(hic).loadHicFile({ url, name, normalization, locus });
+  [CommandType.LOAD_MAP]: async ({ url, name, normalization, locus, panel }, { hic, container }) => {
+    // PROTOTYPE (proto/encode-portal-search): panel 'new' opens another viewer beside the
+    // current one, the way juicebox-web's clone button does, and loads the map there.
+    let browser = currentBrowser(hic);
+    if (panel === 'new') {
+      const { width, height } = browser.config;
+      browser = await hic.createBrowser(container, { width, height });
+      hic.setCurrentBrowser(browser);
+    }
+    await browser.loadHicFile({ url, name, normalization, locus });
   },
 
   [CommandType.LOAD_CONTROL_MAP]: async ({ url, name, normalization }, { hic }) => {

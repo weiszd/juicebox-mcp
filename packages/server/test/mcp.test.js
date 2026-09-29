@@ -132,7 +132,7 @@ describe('tools/list', () => {
     const res = await rpc('tools/list', {}, { 'mcp-session-id': await newSession() });
     const { tools } = (await res.json()).result;
 
-    expect(tools).toHaveLength(28);
+    expect(tools).toHaveLength(30);
     const byName = Object.fromEntries(tools.map((t) => [t.name, t.inputSchema]));
     for (const { name, inputSchema } of prototypeTools) {
       expect(byName[name], name).toEqual(inputSchema);
@@ -255,7 +255,7 @@ describe('toolCall notice', () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('')); // the search tools' catalogs
 
     for (const [name, args] of [
-      ['search_maps', { query: 'GM12878' }],
+      ['search_map_catalogs', { query: 'GM12878' }],
       ['get_data_source_statistics', { source: '4dn' }],
       ['get_map_details', { source: '4dn', index: 0 }],
       ['list_data_sources', {}],

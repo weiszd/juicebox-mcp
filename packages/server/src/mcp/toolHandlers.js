@@ -12,6 +12,7 @@ import { parseDataSource } from '../search/dataParsers.js';
 import { filterMaps } from '../search/mapFilter.js';
 import { formatSearchResults, formatSearchResultsJSON } from '../search/resultFormatter.js';
 import { generateQRPng } from '../qrPng.js';
+import { hicExperiments, formatHicExperiments, encodeSearch, formatEncodeSearch, HIC_ASSAYS, CLASSIFICATIONS } from '../search/encodePortal.js';
 import { VIEW_URI, VIEW_HTML, VIEW_META, VIEW_MIME_TYPE, TOOL_META } from './juiceboxView.js';
 
 // Helper function to convert hex color to RGB
@@ -117,16 +118,17 @@ export function registerTools(mcpServer, deps) {
     'load_map',
     {
       title: 'Load Map',
-      description: 'Load a Hi-C contact map (.hic file) into Juicebox',
+      description: 'Load a Hi-C contact map (.hic file) into Juicebox. With panel "new" the map opens in an additional panel beside the current one (side by side); by default it replaces the map in the current panel.',
       inputSchema: {
         url: z.string().url().describe('URL to the .hic file'),
         name: z.string().optional().describe('Optional name for the map'),
         normalization: z.string().optional().describe('Normalization method (e.g., "VC", "VC_SQRT", "KR", "NONE")'),
-        locus: z.string().optional().describe('Optional genomic locus (e.g., "1:1000000-2000000 1:1000000-2000000")')
+        locus: z.string().optional().describe('Optional genomic locus (e.g., "1:1000000-2000000 1:1000000-2000000")'),
+        panel: z.enum(['current', 'new']).optional().describe('"new" opens another map panel next to the existing one and loads there (side-by-side comparisons). Default: the current panel')
       }
     },
-    async ({ url, name, normalization, locus }) => {
-      return runCommand('load_map', { type: 'loadMap', url, name, normalization, locus }, `Loading map from ${url}${name ? ` (${name})` : ''}`);
+    async ({ url, name, normalization, locus, panel }) => {
+      return runCommand('load_map', { type: 'loadMap', url, name, normalization, locus, panel }, `Loading map from ${url}${name ? ` (${name})` : ''}${panel === 'new' ? ' in a new panel' : ''}`);
     }
   );
 
@@ -742,7 +744,8 @@ Just ask:
       const formatted = sources.map(source =>
         `${source.name} (${source.id}):\n  Description: ${source.description}\n  Data URL: ${source.url}\n  Available columns: ${source.columns.join(', ')}`
       ).join('\n\n');
-      return { content: [{ type: 'text', text: `Available data sources:\n\n${formatted}` }] };
+      const portal = 'ENCODE portal (live search of encodeproject.org, not a catalog):\n  search_encode_hic — Hi-C experiments with their map and track files (tissues, intact Hi-C, cell lines)\n  search_encode — any other assay, annotation, biosample or publication';
+      return { content: [{ type: 'text', text: `Available data sources:\n\n${formatted}\n\n${portal}` }] };
     }
   );
 
@@ -781,12 +784,21 @@ Just ask:
     }
   );
 
-  // --- Tool: search_maps ---
+  // --- Tool: search_map_catalogs (renamed from search_maps on proto/encode-portal-search) ---
+  // What it does: downloads the two curated igv-data TSV catalogs that juicebox-web's
+  // "load from ENCODE / 4DN" modals use (src/search/catalogs.js), and fuzzy-matches every
+  // whitespace-separated query term (with genome/cell-line synonyms) against the catalog
+  // columns; every term must match somewhere (AND).
+  // Limitations: the catalogs are static lists, not the portals. ENCODE ≈176 rows, cell
+  // lines only (GM12878, HCT116, IMR-90, K562, A549 …) — no tissues, no intact Hi-C;
+  // 4DN ≈600 rows. Broad terms ("human", "hg38") match nearly every row. Output repeats
+  // the rows as a table and as raw JSON, so the default 50 rows are ≈64 KB. Anything the
+  // catalogs lack must go through search_encode_hic / search_encode (live portal).
   mcpServer.registerTool(
-    'search_maps',
+    'search_map_catalogs',
     {
-      title: 'Search Maps',
-      description: 'Search for Hi-C contact maps using natural language queries. Searches across all metadata fields (Assembly, Biosource, Biosample, Description, etc.). Use this when users want to find specific maps, e.g., "human hg38 maps", "mouse cell lines", "K562 cells", etc. NOTE: Results are limited to 50 by default. For statistical questions like "what assemblies are covered" or "how many maps are there", use get_data_source_statistics instead.',
+      title: 'Search Map Catalogs',
+      description: 'Search the two curated contact-map catalogs that ship with juicebox-web (ENCODE: ~176 cell-line maps such as GM12878, HCT116, IMR-90, K562; 4DN: ~600 maps) with natural language, e.g. "human hg38 maps", "mouse cell lines", "K562". This is a static list, NOT the ENCODE or 4DN portal: it has no ENCODE tissues and no intact Hi-C. If a query finds nothing here, or the user asks for tissues, intact Hi-C or anything ENCODE-specific, use search_encode_hic instead. Results are limited to 50 by default. For statistical questions like "what assemblies are covered" or "how many maps are there", use get_data_source_statistics instead.',
       inputSchema: {
         source: z.string().optional().describe("Data source ID ('4dn', 'encode') or 'all' to search all sources. Default: 'all'"),
         query: z.string().describe('Natural language search query (e.g., "human hg38", "mouse cells", "K562")'),
@@ -828,6 +840,58 @@ Just ask:
       } catch (error) {
         log.logError('Error in search_maps tool:', error);
         return { content: [{ type: 'text', text: `Error searching maps: ${error.message}` }], isError: true };
+      }
+    }
+  );
+
+  // --- Tool: search_encode_hic (PROTOTYPE, proto/encode-portal-search) ---
+  // Live, experiment-first search of the ENCODE portal; the portal quirks it relies on
+  // are documented in src/search/encodePortal.js.
+  mcpServer.registerTool(
+    'search_encode_hic',
+    {
+      title: 'Search ENCODE Hi-C',
+      description: 'Search the live ENCODE portal (encodeproject.org) for Hi-C experiments and list, per experiment, its contact-map files and the companion files the viewer can load as tracks (loops, contact domains and chromatin stripes as bedpe; subcompartments as bed; compartments as bigWig). Use this for any ENCODE map the catalogs do not have: tissues (heart, colon, brain ...), intact Hi-C, specific cell lines. Put organ, tissue or cell-line words in `biosample` (organs match the ontology; other words fall back to text search); ask for "intact Hi-C" with `assay`; set `classification: "tissue"` when the user means tissue rather than a cell line derived from that organ. To load a map pass `maps[].url` to load_map (prefer the "mapping quality thresholded contact matrix", one per biosample); pass `tracks[].url` to load_track. For non-Hi-C questions use search_encode.',
+      inputSchema: {
+        biosample: z.string().optional().describe('Organ, tissue or cell line words, e.g. "heart", "colon", "K562"'),
+        assay: z.enum(HIC_ASSAYS).optional().describe('One Hi-C flavour; default: all of intact Hi-C, in situ Hi-C, Hi-C, dilution Hi-C'),
+        classification: z.enum(CLASSIFICATIONS).optional().describe('Biosample classification, e.g. "tissue" to exclude cell lines derived from the organ'),
+        assembly: z.string().optional().describe('Genome assembly, e.g. "GRCh38", "mm10"'),
+        query: z.string().optional().describe('Free text for the portal full-text search (lab, donor, treatment ...)'),
+        limit: z.number().int().positive().max(50).optional().describe('Maximum experiments to return (default: 10)')
+      }
+    },
+    async ({ biosample, assay, classification, assembly, query, limit = 10 }) => {
+      try {
+        const result = await hicExperiments({ biosample, assay, classification, assembly, searchTerm: query, limit });
+        return { content: [{ type: 'text', text: formatHicExperiments(result) }] };
+      } catch (error) {
+        log.logError('Error in search_encode_hic tool:', error);
+        return { content: [{ type: 'text', text: `Error searching the ENCODE portal: ${error.message}` }], isError: true };
+      }
+    }
+  );
+
+  // --- Tool: search_encode (PROTOTYPE, proto/encode-portal-search) ---
+  mcpServer.registerTool(
+    'search_encode',
+    {
+      title: 'Search ENCODE',
+      description: 'General search of the live ENCODE portal for anything that is not a Hi-C map: other assays (TF ChIP-seq, Histone ChIP-seq, DNase-seq, ATAC-seq, RNA-seq ...), annotations, biosamples, publications. `query` is the portal full-text search; `filters` are portal facet fields passed through verbatim, e.g. {"assay_title": "TF ChIP-seq", "biosample_ontology.organ_slims": "heart", "target.label": "CTCF"}; a list value means any of them. The result lists the hits with their portal links and the facets you can narrow by. For the files of one experiment use type "File" with {"dataset": "/experiments/ENCSRxxxxxx/"}.',
+      inputSchema: {
+        type: z.string().optional().describe('Portal object type: Experiment (default), Annotation, File, Biosample, Publication, ...'),
+        query: z.string().optional().describe('Free text'),
+        filters: z.record(z.union([z.string(), z.array(z.string())])).optional().describe('Facet field → value or list of values, passed to the portal as query parameters'),
+        limit: z.number().int().positive().max(100).optional().describe('Maximum hits to return (default: 20)')
+      }
+    },
+    async ({ type = 'Experiment', query, filters = {}, limit = 20 }) => {
+      try {
+        const result = await encodeSearch({ type, searchTerm: query, filters, limit });
+        return { content: [{ type: 'text', text: formatEncodeSearch(result, { type }) }] };
+      } catch (error) {
+        log.logError('Error in search_encode tool:', error);
+        return { content: [{ type: 'text', text: `Error searching the ENCODE portal: ${error.message}` }], isError: true };
       }
     }
   );
