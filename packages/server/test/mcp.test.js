@@ -144,13 +144,12 @@ describe('tools/list', () => {
 
   it('search_maps is deliberately renamed search_map_catalogs (ticket 24): same schema, old name gone', async () => {
     const res = await rpc('tools/list', {}, { 'mcp-session-id': await newSession() });
-    const names = (await res.json()).result.tools.map((t) => t.name);
-    const renamed = prototypeTools.filter((t) => t.renamedFrom);
+    const byName = Object.fromEntries((await res.json()).result.tools.map((t) => [t.name, t.inputSchema]));
 
-    expect(renamed.map((t) => [t.renamedFrom, t.name])).toEqual([['search_maps', 'search_map_catalogs']]);
-    expect(Object.keys(renamed[0].inputSchema.properties)).toEqual(['source', 'query', 'limit']); // search_maps' arguments
-    expect(names).toContain('search_map_catalogs');
-    expect(names).not.toContain('search_maps');
+    // The fixture records the rename; the server serves search_maps' arguments under the new name only.
+    expect(prototypeTools.filter((t) => t.renamedFrom).map((t) => [t.renamedFrom, t.name])).toEqual([['search_maps', 'search_map_catalogs']]);
+    expect(Object.keys(byName.search_map_catalogs.properties)).toEqual(['source', 'query', 'limit']);
+    expect(byName.search_maps).toBeUndefined();
   });
 });
 
@@ -573,12 +572,14 @@ describe('panels (ADR-0007)', () => {
     const session = await newSession();
     const page = await pageIn(session);
 
-    const call = callTool(session, 'list_tracks', { panel: 2 });
-    const request = await page.next();
-    page.send({ type: MessageType.ACK, requestId: request.requestId, ok: true, result: [] });
-    await call;
+    for (const panel of [2, 'colon']) {
+      const call = callTool(session, 'list_tracks', { panel });
+      const request = await page.next();
+      page.send({ type: MessageType.ACK, requestId: request.requestId, ok: true, result: [] });
+      await call;
 
-    expect(request).toEqual({ type: CommandType.GET_TRACK_LIST, panel: 2, requestId: expect.any(String) });
+      expect(request).toEqual({ type: CommandType.GET_TRACK_LIST, panel, requestId: expect.any(String) });
+    }
   });
 });
 

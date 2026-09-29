@@ -106,7 +106,7 @@ function shapeExperiment(e) {
   const maps = released.filter((f) => f.file_format === 'hic').map(file)
     .sort((a, b) => (MAP_RANK[a.outputType] ?? 2) - (MAP_RANK[b.outputType] ?? 2) || String(a.replicates) .localeCompare(String(b.replicates)));
   const tracks = released.filter((f) => TRACK_FORMATS.has(f.file_format)).map(file)
-    .sort((a, b) => a.format.localeCompare(b.format) || a.outputType.localeCompare(b.outputType));
+    .sort((a, b) => a.format.localeCompare(b.format) || String(a.outputType).localeCompare(String(b.outputType)));
   return {
     accession: e.accession,
     portalUrl: `${ENCODE_ORIGIN}/experiments/${e.accession}/`,
@@ -123,10 +123,10 @@ function shapeExperiment(e) {
   };
 }
 
-/** Text for the model: one block per experiment, then compact JSON with the loadable URLs. */
 const MAPS_SHOWN = 3;   // some experiments carry 10+ replicate matrices
 const MAPS_IN_JSON = 6;
 
+/** Text for the model: one block per experiment, then compact JSON with the loadable URLs. */
 export function formatHicExperiments({ total, how, experiments, withoutMaps }) {
   const omitted = withoutMaps ? ` (${withoutMaps} without released maps omitted)` : '';
   if (experiments.length === 0) return `No released ENCODE Hi-C experiments with maps found (${how})${omitted}.`;

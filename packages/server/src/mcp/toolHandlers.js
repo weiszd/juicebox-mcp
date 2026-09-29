@@ -739,7 +739,7 @@ Welcome! You can interact with Juicebox using natural language. Just tell me wha
 
 ### Side by Side (panels)
 
-Each map can open in its own panel, numbered 1, 2, ... from the left. With more than one panel open, say which one: by number, by map name, or "both"/"all".
+Each map can open in its own panel, numbered 1, 2, ... from the left. With more than one panel open, say which one: by number, by map name, or all of them ("both panels" means panel "all").
 
 **Open maps side by side:**
 - "Load a heart and a colon intact Hi-C map from ENCODE side by side"

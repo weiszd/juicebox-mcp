@@ -79,9 +79,9 @@ room (checked every 10 s, sent only when it changed), so a later joiner catches 
 ### Panels
 
 A command may carry `panel`: a 1-based position among `hic.getAllBrowsers()` (left to right),
-a map name that only one panel shows, or `"all"`. Omitted, it means the current browser when
-only one is open and fails, listing the panels, when several are. Every ack names the panel it
-acted on, one line per panel for `"all"`. `loadMap {panel: "new"}` opens a browser with
+a map name that only one panel shows, or `"all"`. Omitted, it means the only panel when one is
+open and fails, listing the panels, when several are. A panel command's ack names the panel it
+acted on in `result`, one line per panel for `"all"`. `loadMap {panel: "new"}` opens a browser with
 `hic.createBrowser(container, …)`; `closePanel` removes one (never the last); `getPanelList`
 answers the list of panels. Sync events to and from other pages still follow only the current
 panel, so peers that each hold several panels can drift apart.
