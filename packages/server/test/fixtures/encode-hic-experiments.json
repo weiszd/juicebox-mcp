@@ -1,0 +1,47 @@
+{
+  "@id": "/search/?type=Experiment&format=json",
+  "@type": ["Search"],
+  "total": 38,
+  "@graph": [
+    {
+      "accession": "ENCSR000HRT",
+      "assay_title": "intact Hi-C",
+      "biosample_summary": "Homo sapiens heart left ventricle tissue male adult (51 years)",
+      "biosample_ontology": { "term_name": "heart left ventricle", "classification": "tissue", "organ_slims": ["heart"] },
+      "assembly": ["GRCh38"],
+      "lab": { "title": "Erez Aiden, BCM" },
+      "description": "intact Hi-C on heart left ventricle",
+      "files": [
+        { "accession": "ENCFF001CM", "href": "/files/ENCFF001CM/@@download/ENCFF001CM.hic", "file_format": "hic",
+          "output_type": "contact matrix", "status": "released", "assembly": "GRCh38", "biological_replicates": [1], "file_size": 31400000000 },
+        { "accession": "ENCFF002MQ", "href": "/files/ENCFF002MQ/@@download/ENCFF002MQ.hic", "file_format": "hic",
+          "output_type": "mapping quality thresholded contact matrix", "status": "released", "assembly": "GRCh38", "biological_replicates": [1], "file_size": 27800000000 },
+        { "accession": "ENCFF003XX", "href": "/files/ENCFF003XX/@@download/ENCFF003XX.hic", "file_format": "hic",
+          "output_type": "mapping quality thresholded contact matrix", "status": "in progress", "assembly": "GRCh38", "biological_replicates": [2], "file_size": 29000000000 },
+        { "accession": "ENCFF004LP", "href": "/files/ENCFF004LP/@@download/ENCFF004LP.bedpe.gz", "file_format": "bedpe",
+          "output_type": "loops", "status": "released", "assembly": "GRCh38", "biological_replicates": [1], "file_size": 210000 },
+        { "accession": "ENCFF005CD", "href": "/files/ENCFF005CD/@@download/ENCFF005CD.bedpe.gz", "file_format": "bedpe",
+          "output_type": "contact domains", "status": "released", "assembly": "GRCh38", "biological_replicates": [1], "file_size": 90000 },
+        { "accession": "ENCFF006SC", "href": "/files/ENCFF006SC/@@download/ENCFF006SC.bigWig", "file_format": "bigWig",
+          "output_type": "genome compartments", "status": "released", "assembly": "GRCh38", "biological_replicates": [1], "file_size": 12000000 },
+        { "accession": "ENCFF007PA", "href": "/files/ENCFF007PA/@@download/ENCFF007PA.pairs.gz", "file_format": "pairs",
+          "output_type": "pairs", "status": "released", "assembly": "GRCh38", "biological_replicates": [1], "file_size": 90000000000 }
+      ]
+    },
+    {
+      "accession": "ENCSR000NOM",
+      "assay_title": "intact Hi-C",
+      "biosample_summary": "Homo sapiens heart right atrium tissue female adult (53 years)",
+      "biosample_ontology": { "term_name": "right atrium auricular region", "classification": "tissue", "organ_slims": ["heart"] },
+      "assembly": [],
+      "lab": { "title": "Erez Aiden, BCM" },
+      "files": [
+        { "accession": "ENCFF008IP", "href": "/files/ENCFF008IP/@@download/ENCFF008IP.hic", "file_format": "hic",
+          "output_type": "contact matrix", "status": "in progress", "assembly": "GRCh38", "biological_replicates": [1] }
+      ]
+    }
+  ],
+  "facets": [
+    { "field": "assay_title", "title": "Assay title", "terms": [{ "key": "intact Hi-C", "doc_count": 38 }] }
+  ]
+}
