@@ -83,7 +83,7 @@ export function registerTools(mcpServer, deps) {
     if (!outcome.ok) {
       return { content: [{ type: 'text', text: `Error: ${outcome.error || `the page could not apply ${command.type}`}` }], isError: true };
     }
-    // A command's ack carries one line per panel it acted on (PROTOTYPE, tickets 25-26).
+    // A command's ack carries one line per panel it acted on (ADR-0007).
     return { content: [{ type: 'text', text: typeof outcome.result === 'string' ? `${text}\n${outcome.result}` : text }] };
   }
 
@@ -737,6 +737,27 @@ Welcome! You can interact with Juicebox using natural language. Just tell me wha
 - "Remove normalization" or "Set normalization to None"
 - Available: None, Coverage (VC), Coverage-Sqrt (VC_SQRT), Balanced/Knight-Ruiz (KR), SCALE, INTER_SCALE, GW_SCALE
 
+### Side by Side (panels)
+
+Each map can open in its own panel, numbered 1, 2, ... from the left. With more than one panel open, say which one: by number, by map name, or "both"/"all".
+
+**Open maps side by side:**
+- "Load a heart and a colon intact Hi-C map from ENCODE side by side"
+- "Open GM12878 next to it at chr8:127-129Mb"
+- "Which panels are open?"
+
+**Per-panel tracks and settings:**
+- "Load CTCF into the heart panel"
+- "Load the gene track in panel 2"
+- "Set the colon colour scale to 50"
+
+**All panels at once:**
+- "Go to MYC on both panels"
+- "Load the gene track in all panels"
+
+**Close a panel:**
+- "Close the heart panel" (the panels to its right move one number left; the last panel stays open)
+
 ### Sessions
 
 **Save and restore:**
@@ -832,7 +853,7 @@ Just ask:
     }
   );
 
-  // --- Tool: search_map_catalogs (renamed from search_maps on proto/encode-portal-search) ---
+  // --- Tool: search_map_catalogs (renamed from search_maps, ticket 24) ---
   // What it does: downloads the two curated igv-data TSV catalogs that juicebox-web's
   // "load from ENCODE / 4DN" modals use (src/search/catalogs.js), and fuzzy-matches every
   // whitespace-separated query term (with genome/cell-line synonyms) against the catalog
@@ -892,7 +913,7 @@ Just ask:
     }
   );
 
-  // --- Tool: search_encode_hic (PROTOTYPE, proto/encode-portal-search) ---
+  // --- Tool: search_encode_hic ---
   // Live, experiment-first search of the ENCODE portal; the portal quirks it relies on
   // are documented in src/search/encodePortal.js.
   mcpServer.registerTool(
@@ -920,7 +941,7 @@ Just ask:
     }
   );
 
-  // --- Tool: search_encode (PROTOTYPE, proto/encode-portal-search) ---
+  // --- Tool: search_encode ---
   mcpServer.registerTool(
     'search_encode',
     {

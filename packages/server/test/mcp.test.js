@@ -560,6 +560,15 @@ describe('panels (ADR-0007)', () => {
     expect(text(result)).toBe(JSON.stringify(panels, null, 2));
   });
 
+  it('juicebox_help shows side by side, per-panel tracks, "all" and closing a panel', async () => {
+    const help = text(await callTool(await newSession(), 'juicebox_help'));
+
+    expect(help).toContain('"Load a heart and a colon intact Hi-C map from ENCODE side by side"');
+    expect(help).toContain('"Load CTCF into the heart panel"');
+    expect(help).toContain('"Go to MYC on both panels"');
+    expect(help).toContain('"Close the heart panel"');
+  });
+
   it('list_tracks {panel} asks the page for that panel\'s tracks', async () => {
     const session = await newSession();
     const page = await pageIn(session);

@@ -1,17 +1,18 @@
 /**
- * ENCODE portal client — PROTOTYPE (branch proto/encode-portal-search).
- *
- * Live search of https://www.encodeproject.org, as opposed to the curated
- * igv-data catalogs in catalogs.js. Learned 2026-09-29 (see
- * .scratch/v2/encode-probes/):
- * - The portal sits behind AWS WAF. Any explicit User-Agent is answered in
- *   <300 ms from Cloudflare's edge; a spoofed browser UA gets a 502 from their
- *   bot filter, and no UA hangs until timeout. We keep the catalog fetch's UA.
- * - A search with no hits answers HTTP 404 with a normal JSON body (total 0).
- * - Repeating a filter key means OR; `field=` picks the returned properties,
- *   dotted names embed sub-objects (files.href …).
- * - biosample_ontology.organ_slims covers cell lines derived from the organ
- *   too (colon → HCT116), so `classification` is exposed as a filter.
+ * ENCODE portal client: live search of https://www.encodeproject.org, as opposed
+ * to the curated igv-data catalogs in catalogs.js. Portal facts (ticket 24,
+ * 2026-09-29; probes in .scratch/v2/encode-probes/):
+ * - AWS WAF in front: any explicit User-Agent is answered in <300 ms; a spoofed
+ *   browser UA gets 502 (bot filter, not an outage); no UA hangs until timeout.
+ * - Zero hits = HTTP 404 with a normal JSON body (total 0).
+ * - `field=` selects properties, dotted names embed (files.href); a repeated
+ *   filter key means OR.
+ * - organ_slims includes cell lines derived from the organ (colon → HCT116),
+ *   hence the classification filter.
+ * - Hi-C assay_title: intact Hi-C, in situ Hi-C, Hi-C, dilution Hi-C. Map
+ *   output_type: "mapping quality thresholded contact matrix", "contact matrix"
+ *   (some experiments carry 10+ replicate matrices). Matrices are 25–90 GB; the
+ *   viewer range-reads, so size does not matter for loading.
  */
 
 export const ENCODE_ORIGIN = 'https://www.encodeproject.org';
