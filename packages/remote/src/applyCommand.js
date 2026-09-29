@@ -21,9 +21,9 @@ export async function applyCommand(hic, container, command) {
 // Payload shapes are what the server's tool handlers send (packages/server/src/mcp/toolHandlers.js).
 const appliers = {
   [CommandType.LOAD_MAP]: async ({ url, name, normalization, locus, panel }, { hic, container }) => {
-    // PROTOTYPE (proto/encode-portal-search): panel 'new' opens another viewer beside the
-    // current one, the way juicebox-web's clone button does, and loads the map there;
-    // otherwise the addressed panel's map is replaced.
+    // Panel 'new' opens another viewer beside the current one, the way juicebox-web's
+    // clone button does, and loads the map there; otherwise the addressed panel's map is
+    // replaced (ADR-0007).
     let browser;
     if (panel === 'new') {
       const { width, height } = currentBrowser(hic).config;
@@ -52,7 +52,8 @@ const appliers = {
     const browser = onePanel(hic, panel, 'close_panel');
     if (hic.getAllBrowsers().length === 1) throw new Error('cannot close the last panel');
     const closed = panelLabel(hic, browser);
-    // What juicebox.js's own deleteBrowser does (not on the 4.7.0 namespace).
+    // What juicebox.js's own deleteBrowser does; juicebox.js 4.7.0 exports no deleteBrowser
+    // on its namespace (ADR-0007).
     browser.registry.delete(browser);
     const remaining = hic.getAllBrowsers().map((b, i) => `${i + 1} (${datasetLabel(b)})`);
     return `closed ${closed}; remaining: ${remaining.join(' | ')}`;
@@ -113,14 +114,14 @@ const appliers = {
   },
 
   [CommandType.REMOVE_TRACK]: (command, { hic }) =>
-    forPanels(hic, command.panel, (browser) => {
+    forTrackPanels(hic, command, (browser) => {
       const { trackPair, track2D } = findTrack(browser, command);
       if (track2D) browser.removeTrack2D(track2D);
       else browser.layoutController.removeTrackXYPair(trackPair);
     }),
 
   [CommandType.SET_TRACK_COLOR]: (command, { hic }) =>
-    forPanels(hic, command.panel, (browser) => {
+    forTrackPanels(hic, command, (browser) => {
       const { trackPair, track2D } = findTrack(browser, command);
       // No colour resets the track to its default (a 2D track's features' own colours).
       const color = command.color ? rgbString(command.color) : undefined;
@@ -129,7 +130,7 @@ const appliers = {
     }),
 
   [CommandType.SET_TRACK_NAME]: (command, { hic }) =>
-    forPanels(hic, command.panel, (browser) => {
+    forTrackPanels(hic, command, (browser) => {
       const { trackPair, track2D } = findTrack(browser, command);
       if (track2D) browser.setTrack2DName(track2D, command.name);
       // igv's name setter relabels the row, which posts the change event once.
@@ -137,13 +138,13 @@ const appliers = {
     }),
 
   [CommandType.SET_TRACK_DATA_RANGE]: (command, { hic }) =>
-    forPanels(hic, command.panel, (browser) => findTrackPair(browser, command).setDataRange(command.min, command.max)),
+    forTrackPanels(hic, command, (browser) => findTrackPair(browser, command).setDataRange(command.min, command.max)),
 
   [CommandType.SET_TRACK_AUTOSCALE]: (command, { hic }) =>
-    forPanels(hic, command.panel, (browser) => findTrackPair(browser, command).setAutoscale(command.enabled)),
+    forTrackPanels(hic, command, (browser) => findTrackPair(browser, command).setAutoscale(command.enabled)),
 
   [CommandType.SET_TRACK_LOG_SCALE]: (command, { hic }) =>
-    forPanels(hic, command.panel, (browser) => findTrackPair(browser, command).setLogScale(command.enabled)),
+    forTrackPanels(hic, command, (browser) => findTrackPair(browser, command).setLogScale(command.enabled)),
 
   [CommandType.GET_TRACK_LIST]: async (command, { hic }) => {
     const { trackPairs, tracks2D } = onePanel(hic, command.panel, 'list_tracks');
@@ -229,15 +230,16 @@ async function zoom(browser, direction, { centerX, centerY }) {
 /**
  * The browsers a command's `panel` addresses (CONTEXT.md: panel): a 1-based position
  * from the left, "all", or a map name matched case-insensitively that must be unique.
- * Omitted means the current panel, and is an error when more than one panel is open.
+ * Omitted means the current panel, and is an error when more than one panel is open;
+ * that error offers "all" only to a command that takes it (`acceptsAll`).
  */
-function resolvePanels(hic, panel) {
+function resolvePanels(hic, panel, acceptsAll = true) {
   const browsers = hic.getAllBrowsers();
   if (panel === undefined || panel === null) {
     if (browsers.length === 1) return [currentBrowser(hic)];
     if (browsers.length === 0) throw new Error('No browser');
     const labels = browsers.map((b, i) => `${i + 1} (${datasetLabel(b)})`);
-    throw new Error(`${browsers.length} panels open; say panel: ${labels.join(' | ')} | all`);
+    throw new Error(`${browsers.length} panels open; say panel: ${labels.join(' | ')}${acceptsAll ? ' | all' : ''}`);
   }
   // A string of digits ("2") is a position, not a name.
   if (typeof panel === 'string' && /^\d+$/.test(panel.trim())) panel = Number(panel);
@@ -246,7 +248,7 @@ function resolvePanels(hic, panel) {
     if (!browser) throw new Error(`no panel ${panel} (${browsers.length} open)`);
     return [browser];
   }
-  if (panel.toLowerCase() === 'all') return browsers;
+  if (isAll(panel)) return browsers;
   const positions = [];
   browsers.forEach((b, i) => {
     if (b.dataset?.name?.toLowerCase() === panel.toLowerCase()) positions.push(i + 1);
@@ -282,11 +284,24 @@ async function forPanels(hic, panel, apply) {
 
 /** The one browser `panel` addresses, for a command that does not take "all". */
 function onePanel(hic, panel, tool) {
-  if (typeof panel === 'string' && panel.trim().toLowerCase() === 'all') {
+  if (isAll(panel)) {
     throw new Error(`${tool} acts on one panel; "all" is not accepted`);
   }
-  return resolvePanels(hic, panel)[0];
+  return resolvePanels(hic, panel, false)[0];
 }
+
+/**
+ * forPanels for a track command. With "all" the track must be named: a track
+ * number is a position in one panel's list and means a different track in each.
+ */
+function forTrackPanels(hic, command, apply) {
+  if (isAll(command.panel) && /^\d+$/.test(String(command.track).trim())) {
+    throw new Error(`with panel "all", name the track; track ${command.track} is a different track in each panel`);
+  }
+  return forPanels(hic, command.panel, apply);
+}
+
+const isAll = (panel) => typeof panel === 'string' && panel.trim().toLowerCase() === 'all';
 
 /** "panel 2 (heart, mm10)", or "panel 2 (no map)". */
 function panelLabel(hic, browser) {
