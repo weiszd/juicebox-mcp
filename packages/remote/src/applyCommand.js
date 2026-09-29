@@ -52,9 +52,10 @@ const appliers = {
     const browser = onePanel(hic, panel, 'close_panel');
     if (hic.getAllBrowsers().length === 1) throw new Error('cannot close the last panel');
     const closed = panelLabel(hic, browser);
-    // What juicebox.js's own deleteBrowser does; juicebox.js 4.7.0 exports no deleteBrowser
-    // on its namespace (ADR-0007).
-    browser.registry.delete(browser);
+    // The fallback covers juicebox.js builds without the export (upstream 4.7.0); it goes away
+    // when the peer dependency is raised (ADR-0007).
+    if (hic.deleteBrowser) hic.deleteBrowser(browser);
+    else browser.registry.delete(browser);
     const remaining = hic.getAllBrowsers().map((b, i) => `${i + 1} (${datasetLabel(b)})`);
     return `closed ${closed}; remaining: ${remaining.join(' | ')}`;
   },
