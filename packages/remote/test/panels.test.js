@@ -382,7 +382,20 @@ describe('panels: loadMap', () => {
 });
 
 describe('panels: closePanel', () => {
-  it('closes the addressed panel through its registry and reports the remaining numbering', async () => {
+  it('closes the addressed panel through hic.deleteBrowser when the namespace exports it', async () => {
+    const hic = fakeHic([HEART, COLON, LIVER]);
+    const colon = hic.browsers[1];
+    hic.deleteBrowser = vi.fn((browser) => hic.browsers.splice(hic.browsers.indexOf(browser), 1));
+    const send = await joinedWith(hic);
+
+    const ack = await send({ type: 'closePanel', panel: 'colon' });
+
+    expect(hic.deleteBrowser).toHaveBeenCalledWith(colon);
+    expect(colon.registry.delete).not.toHaveBeenCalled();
+    expect(ack).toEqual({ ok: true, result: 'closed panel 2 (colon, GRCh38); remaining: 1 (heart, mm10) | 2 (liver, mm10)' });
+  });
+
+  it('falls back to its registry without hic.deleteBrowser (juicebox.js 4.7.0) and reports the remaining numbering', async () => {
     const hic = fakeHic([HEART, COLON, LIVER]);
     const colon = hic.browsers[1];
     const send = await joinedWith(hic);
