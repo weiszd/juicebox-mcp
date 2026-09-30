@@ -108,10 +108,10 @@ Configuration lives in `packages/server/wrangler.toml`:
 | route | `jbmcp.3dg.io`, custom domain | wrangler attaches the domain and its DNS record on deploy |
 | `workers_dev`, `preview_urls` | `false` | one public hostname; no `*.workers.dev` second entry point for clients or pages to drift onto |
 | `BROWSER_URL` | `https://aidenlab.org/juicebox/` | juicebox-web, where join and snapshot links open (the trailing slash matters: relative assets) |
-| `ALLOWED_ORIGINS` | aidenlab.org, juicebox.aidenlab.org, 3dg.io and www variants, juicebox-web.pages.dev, localhost:5173 | exact-match `Origin` check on `/ws`; WebSockets are not covered by CORS |
-| `TINYURL_DOMAIN`, `TINYURL_ENDPOINT` | `t.3dg.io`, TinyURL API | snapshot-link shortening, the account juicebox-web uses |
+| `ALLOWED_ORIGINS` | aidenlab.org, juicebox.aidenlab.org, 3dg.io and www variants, juicebox-web.pages.dev, localhost:5173 | exact-match `Origin` check on `/ws` and `/shorten`; WebSockets are not covered by CORS |
+| `TINYURL_DOMAIN`, `TINYURL_ENDPOINT` | `t.3dg.io`, TinyURL API | snapshot-link shortening, for `create_shareable_url` and for the page's Share button, which posts to `/shorten` (TinyURL's API no longer answers browser origins) |
 | secret `SESSION_HMAC_SECRET` | `wrangler secret put` | keys room ids derived from ChatGPT's `x-openai-session`; unset → that path fails |
-| secret `TINYURL_API_KEY` | `wrangler secret put` | unset → `create_shareable_url` returns the long link |
+| secret `TINYURL_API_KEY` | `wrangler secret put` | unset → `create_shareable_url` and `/shorten` return the long link |
 
 For `wrangler dev`, `packages/server/.dev.vars` overrides the vars and stands in for the secrets.
 
