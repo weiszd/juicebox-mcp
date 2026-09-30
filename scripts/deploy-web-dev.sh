@@ -8,7 +8,7 @@
 #
 # Vite inlines VITE_* vars at build time and a direct upload never sees the Pages
 # project's variables, so everything the page needs is passed here. The Share
-# button shortens through the Worker's /shorten (ticket 31), so no TinyURL key.
+# button shortens through juicebox-web's own jb-shortlink worker, so no TinyURL key.
 #
 # Pairs with the v2 Worker: `wrangler deploy --env v2` in packages/server (its
 # [env.v2] BROWSER_URL points here and ALLOWED_ORIGINS lists this origin).
@@ -21,6 +21,6 @@ cd "$WEB_DIR"
 echo "building $WEB_DIR with VITE_WS_URL=$VITE_WS_URL"
 VITE_WS_URL="$VITE_WS_URL" npm run build
 grep -q "${VITE_WS_URL#wss://}" dist/assets/*.js || { echo "built assets do not contain $VITE_WS_URL" >&2; exit 1; }
-grep -q "/shorten" dist/assets/*.js || { echo "built assets do not contain the /shorten endpoint" >&2; exit 1; }
+grep -q "juicebox.aidenlab.org/shorten" dist/assets/*.js || { echo "built assets do not contain the jb-shortlink /shorten endpoint" >&2; exit 1; }
 npx wrangler pages deploy dist --project-name "$PROJECT" --branch main --commit-dirty=true
 echo "live at https://juicebox-v2.3dg.io/ (and https://$PROJECT.pages.dev/)"
