@@ -84,8 +84,19 @@ open and fails, listing the panels, when several are. A panel command's ack name
 acted on in `result`, one line per panel for `"all"`. `loadMap {panel: "new"}` opens a browser with
 `hic.createBrowser(container, …)`; `closePanel` removes one (never the last) with `hic.deleteBrowser(browser)`, or
 `browser.registry.delete(browser)` on a juicebox.js without that export (4.7.0); `getPanelList`
-answers the list of panels. Sync events to and from other pages still follow only the current
-panel, so peers that each hold several panels can drift apart.
+answers the list of panels.
+
+Sync events are kept per panel too: every panel is followed, each event carries `panel`, the
+sender's position, and a peer applies it to its panel at that position, dropping it when it has
+none. The one exception is a `mapLoad` for the position one past the peer's last panel, which
+opens that panel (as `loadMap {panel: "new"}` does) and loads the map there, so a panel cloned
+and loaded on one page appears on the others. An event without `panel` (from an older remote)
+applies to the current panel. ADR-0008.
+
+**Host requirement:** a host that creates a panel must select it (`hic.setCurrentBrowser`), as
+juicebox-web's clone button and juicebox.js's own restore do. juicebox.js announces no panel's
+creation, so the remote notices a new panel when one is selected (and after each command or
+catch-up it runs); a panel created and never selected is not followed until then.
 
 ### Protocol
 

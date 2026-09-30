@@ -68,5 +68,5 @@ A remote→server reply to a command: ok, or an error.
 _Avoid_: response, result
 
 **Sync event**:
-A remote→room message describing a change made on that page; relayed to peers only, never back to the sender.
+A remote→room message describing a change made in one panel of that page, named by position; relayed to peers only, never back to the sender.
 _Avoid_: sync command, update

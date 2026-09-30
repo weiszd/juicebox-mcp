@@ -128,6 +128,7 @@ function fakeHic(autoThreshold) {
     EventBus: { globalBus: bus },
     current: fakeBrowser(autoThreshold, { displayMode: 'A', threshold: autoThreshold.A }),
     getCurrentBrowser: () => hic.current,
+    getAllBrowsers: () => [hic.current],
     toJSON: () => {
       const { dataset, displayMode } = hic.current;
       const threshold = hic.current.getColorScale().getThreshold();

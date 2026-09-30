@@ -69,7 +69,7 @@ export function attachRemote({ hic, container, url, room, onStatus, onToolCall, 
     },
   });
 
-  const observer = observe(hic, (msg) => client.send(msg));
+  const observer = observe(hic, container, (msg) => client.send(msg));
 
   function handleMessage(msg) {
     if (typeof msg !== 'object' || msg === null) return;
@@ -127,6 +127,7 @@ export function attachRemote({ hic, container, url, room, onStatus, onToolCall, 
       ack.ok = false;
       ack.error = e instanceof Error ? e.message : String(e);
     }
+    observer.rescan(); // load_map panel:"new" and close_panel open and close panels
     client.send(ack);
   }
 
@@ -138,11 +139,12 @@ export function attachRemote({ hic, container, url, room, onStatus, onToolCall, 
     let failed = false;
     try {
       const session = await sessionToRestore(answer);
-      // The room already shows it. restoreSession replaces the browser; the observer follows.
+      // The room already shows it. restoreSession replaces the panels; the observer follows them.
       if (session) await observer.guard(() => hic.restoreSession(container, session));
     } catch {
       failed = true; // unreadable, or the restore failed: the page stays as it is, with no one to tell
     }
+    observer.rescan(); // the restored session's panels replace the page's
     if (client.stopped) return;
     // The room wins (§7): one this page failed to show keeps its session until the page changes.
     if (failed) lastSaved = hic.compressedSession();

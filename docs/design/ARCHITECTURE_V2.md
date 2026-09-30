@@ -160,8 +160,15 @@ panel fails.
 Receiving a `syncEvent` sets `isSyncing = true` around the apply so the
 resulting callbacks are not re‑emitted. Same rule as the prototype.
 
-Sync events follow, and are applied to, the current panel only; a page with
-several panels drifts from its peers until sync events name a panel (ticket 29).
+Every sync event carries `panel`, the sender's 1-based left-to-right position
+(what `list_panels` prints), and is applied to the receiver's panel at that
+position; a position the receiver lacks is dropped, except that a `mapLoad`
+for one past its last panel opens that panel and loads the map there. An event
+without `panel` applies to the current panel. The remote follows every panel
+in `getAllBrowsers()`, scanning again on `BrowserSelect` and after each command
+or catch-up it runs, so a host that creates a panel must select it.
+`BrowserSelect` itself is not mirrored. Panels synced within one page each send
+their own `locusChange`. ADR-0008.
 
 ### 5.4 Protocol (`protocol.js`)
 
