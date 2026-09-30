@@ -136,7 +136,7 @@ panel fails.
 | `setBackgroundColor {panel}` | one or all | `contactMatrixView.setBackgroundColor(rgb)` |
 | `setColorScale {op, value, panel}` | one or all | `browser.setColorScaleThreshold(t)` |
 | `setNormalization {panel}` | one or all | `browser.setNormalization(n)` |
-| `loadTrack {configs,panel}` | one or all | `browser.loadTracks(configs)` (does not await completion — ADR‑0017) |
+| `loadTrack {url\|preset,name?,color?,panel}` | one or all | `browser.loadTracks([config])` (does not await completion — ADR‑0017); `preset: "genes"` becomes the UCSC NCBI RefSeq file for that panel's `dataset.genomeId` |
 | `getTrackList {requestId,panel}` | one | enumerate `browser.trackPairs` then `browser.tracks2D` → reply `trackListData` |
 | `getPanelList {requestId}` | — | `hic.getAllBrowsers()` → `[{panel, current, map, genome, controlMap, tracks, locus}]` |
 | `removeTrack`, `setTrackColor`, `setTrackName`, `setTrackDataRange`, `setTrackAutoscale`, `setTrackLogScale` `{track,…,panel}` | one or all | resolve by name or 1‑based index (by name only with `"all"`), then `layoutController.removeTrackXYPair(tp)` / `tp.setColor` / `tp.setTrackLabelName` / `tp.setDataRange` / `tp.track.autoscale=` / `tp.track.logScale=` |

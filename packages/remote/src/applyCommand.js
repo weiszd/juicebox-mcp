@@ -101,8 +101,8 @@ const appliers = {
   [CommandType.SET_NORMALIZATION]: ({ normalization, panel }, { hic }) =>
     forPanels(hic, panel, (browser) => browser.setNormalization(normalization)),
 
-  [CommandType.LOAD_TRACK]: ({ url, name, color, trackType, format, panel }, { hic }) => {
-    const config = { url };
+  [CommandType.LOAD_TRACK]: ({ url, preset, name, color, trackType, format, panel }, { hic }) => {
+    const config = {};
     if (name) config.name = name;
     if (color) config.color = rgbString(color);
     if (trackType) config.type = trackType;
@@ -110,7 +110,9 @@ const appliers = {
     // Not awaited: ok means the load started, not that the data arrived. juicebox.js
     // shows a pending row meanwhile and alerts on failure itself (ADR-0017).
     return forPanels(hic, panel, (browser) => {
-      browser.loadTracks([{ ...config }]);
+      // A preset is resolved here, per panel, because the file depends on the map's genome.
+      const track = preset ? presetTrack(preset, browser) : { url };
+      browser.loadTracks([{ ...track, ...config }]);
     });
   },
 
@@ -266,6 +268,22 @@ function resolvePanels(hic, panel, acceptsAll = true) {
  * line per panel, "panel N (map, genome): ok" or its error; rejects only when every
  * panel fails.
  */
+// UCSC ships NCBI RefSeq Select for these assemblies; the others get the full NCBI RefSeq set.
+const REFSEQ_SELECT_GENOMES = new Set(['hg38', 'hg19', 'mm10', 'mm39']);
+
+/** The `genes` preset: NCBI RefSeq from UCSC for the genome of this browser's map. */
+function presetTrack(preset, browser) {
+  if (preset !== 'genes') throw new Error(`Unknown track preset "${preset}"`);
+  const genome = browser.dataset?.genomeId;
+  if (!genome) throw new Error('The map does not say which genome it is on, so no gene track can be chosen');
+  const table = REFSEQ_SELECT_GENOMES.has(genome) ? 'ncbiRefSeqSelect' : 'ncbiRefSeq';
+  return {
+    url: `https://hgdownload.soe.ucsc.edu/goldenPath/${genome}/database/${table}.txt.gz`,
+    type: 'annotation',
+    format: 'refgene',
+  };
+}
+
 async function forPanels(hic, panel, apply) {
   const lines = [];
   let failed = 0;
