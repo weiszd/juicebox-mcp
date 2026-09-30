@@ -88,15 +88,22 @@ answers the list of panels.
 
 Sync events are kept per panel too: every panel is followed, each event carries `panel`, the
 sender's position, and a peer applies it to its panel at that position, dropping it when it has
-none. The one exception is a `mapLoad` for the position one past the peer's last panel, which
-opens that panel (as `loadMap {panel: "new"}` does) and loads the map there, so a panel cloned
-and loaded on one page appears on the others. An event without `panel` (from an older remote)
-applies to the current panel. ADR-0008.
+none. Opening and closing a panel are sync events too: `panelOpen {panel}` opens an empty panel
+on a peer whose last panel is one before it (as `loadMap {panel: "new"}` does) and is dropped
+otherwise; `panelClose {panel}` closes the peer's panel at that position, never its last one. So
+positions stay aligned on every page, empty panels included, and a `mapLoad` only ever applies to
+a panel the peer has. An event without `panel` (from an older remote) applies to the current
+panel. A peer's `getSession` answer, which a late joiner restores, lists one entry per panel,
+`{}` for an empty one; the room's stored session (`hic.compressedSession()`) still skips them.
+ADR-0008.
 
-**Host requirement:** a host that creates a panel must select it (`hic.setCurrentBrowser`), as
-juicebox-web's clone button and juicebox.js's own restore do. juicebox.js announces no panel's
-creation, so the remote notices a new panel when one is selected (and after each command or
-catch-up it runs); a panel created and never selected is not followed until then.
+**Host requirements:** the remote hears a panel open and close from juicebox.js's global
+`BrowserAdd` and `BrowserDelete` events (juicebox.js fork build; not posted by a restore or a
+reset). Without them panels still open and close locally, but peers are not told. A host that
+creates a panel must also select it (`hic.setCurrentBrowser`), as juicebox-web's clone button
+and juicebox.js's own restore do: the remote scans the panels again on every selection (and
+after each command or catch-up it runs), which is how a restored session's panels, or any panel
+on a juicebox.js without `BrowserAdd`, get followed.
 
 ### Protocol
 

@@ -1,5 +1,5 @@
 import { MessageType, SyncEventType } from './protocol.js';
-import { newPanel } from './applyCommand.js';
+import { deletePanel, newPanel } from './applyCommand.js';
 
 // While dragging, at most one locusChange per LOCUS_THROTTLE_MS, and the drag's
 // last position always goes out; otherwise one once changes stop for LOCUS_DEBOUNCE_MS.
@@ -11,10 +11,11 @@ const LOCUS_DEBOUNCE_MS = 100;
  * events to it. Design §5.3.
  *
  * Follows every panel: coordinator callbacks are subscribed on each browser in
- * `hic.getAllBrowsers()`, and the list is scanned again on `BrowserSelect` and on
- * `rescan()` (juicebox.js announces no panel's creation or closing; every way a panel
- * is created selects it, ADR-0008). Every sync event carries `panel`, the sender's
- * 1-based position, and a peer's is applied to the panel at that position.
+ * `hic.getAllBrowsers()`, and the list is scanned again on `BrowserAdd`, `BrowserSelect`
+ * and `rescan()` (a restore posts no `BrowserAdd`, but selects a panel). Every sync event
+ * carries `panel`, the sender's 1-based position, and a peer's is applied to the panel at
+ * that position. Opening and closing a panel are sync events too (`panelOpen`,
+ * `panelClose`), so positions stay aligned across pages, empty panels included (ADR-0008).
  * Changes made while `guard` runs are not sent, so applying a peer's sync event
  * or a command does not echo back. Applies must run one at a time.
  *
@@ -85,7 +86,17 @@ export function observe(hic, container, send) {
 
   // Global EventBus handlers; each receives `{type, data}`.
   const busHandlers = {
-    // A new panel is selected when it is created, and a restored session's panels replace the old ones.
+    // Posted once the browser is in getAllBrowsers(), before it is selected; not by a restore.
+    BrowserAdd: ({ data: browser }) => {
+      rescan();
+      emit(browser, SyncEventType.PANEL_OPEN, {});
+    },
+    // Posted while the browser is still in getAllBrowsers(), so its position is the one it leaves.
+    BrowserDelete: ({ data: browser }) => {
+      emit(browser, SyncEventType.PANEL_CLOSE, {});
+      if (followed.has(browser)) unfollow(browser);
+    },
+    // A restored session's panels replace the old ones, and one of them is selected.
     BrowserSelect: () => rescan(),
     TrackXYPairLoad: ({ data: trackPair }) => {
       trackNames.set(trackPair, trackPair.track.name);
@@ -154,6 +165,10 @@ export function observe(hic, container, send) {
       if (browser.getDisplayMode() !== displayMode) await browser.setDisplayMode(displayMode);
     },
     [SyncEventType.MAP_LOAD]: (browser, { url, name }) => browser.loadHicFile({ url, name }),
+    // Never the last panel: a page always shows one.
+    [SyncEventType.PANEL_CLOSE]: (browser) => {
+      if (hic.getAllBrowsers().length > 1) deletePanel(hic, browser);
+    },
     [SyncEventType.CONTROL_MAP_LOAD]: (browser, { url, name }) => browser.loadHicControlFile({ url, name }),
     [SyncEventType.TRACK_LOAD]: (browser, { configs }) => {
       // A url a track pair already carries (a pending one its own config, a loaded one its track's)
@@ -262,15 +277,22 @@ export function observe(hic, container, send) {
   /**
    * The panel a peer's sync event is for: the one at its position, the current one for an
    * event without `panel` (a remote from before ADR-0008), or undefined when this page has
-   * no such panel. A mapLoad for the position one past the last opens that panel.
+   * no such panel. panelClose, which only a remote from ticket 33 on sends, must name one.
    */
-  async function panelFor({ panel, syncType }) {
-    if (panel === undefined) return hic.getCurrentBrowser();
+  function panelFor({ panel, syncType }) {
+    if (panel === undefined) return syncType === SyncEventType.PANEL_CLOSE ? undefined : hic.getCurrentBrowser();
     if (!Number.isInteger(panel) || panel < 1) return undefined;
-    const browsers = hic.getAllBrowsers();
-    if (panel <= browsers.length) return browsers[panel - 1];
-    if (syncType === SyncEventType.MAP_LOAD && panel === browsers.length + 1) return newPanel(hic, container);
-    return undefined;
+    return hic.getAllBrowsers()[panel - 1];
+  }
+
+  /** A peer's sync event: panelOpen opens an empty panel only at one past the last one. */
+  async function applyEvent(event) {
+    if (event.syncType === SyncEventType.PANEL_OPEN) {
+      if (event.panel === hic.getAllBrowsers().length + 1) await newPanel(hic, container);
+      return;
+    }
+    const browser = panelFor(event);
+    if (browser) await appliers[event.syncType](browser, event);
   }
 
   async function guard(fn) {
@@ -296,14 +318,11 @@ export function observe(hic, container, send) {
     async apply(event) {
       if (detached) return;
       try {
-        await guard(async () => {
-          const browser = await panelFor(event);
-          if (browser) await appliers[event.syncType](browser, event);
-        });
+        await guard(() => applyEvent(event));
       } catch {
         // Dropped: nothing to report it to.
       }
-      rescan(); // a mapLoad may have opened a panel
+      rescan(); // a panelOpen or panelClose changed the panels
     },
 
     detach() {

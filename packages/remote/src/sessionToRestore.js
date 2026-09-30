@@ -10,7 +10,7 @@
  */
 export async function sessionToRestore({ session, compressedSession }) {
   if (!session && typeof compressedSession === 'string') session = await decompressSession(compressedSession);
-  // A session writes one entry per browser with a map (juicebox.js HICBrowser.toJSON).
+  // An entry with a url is a panel with a map; a peer's session also lists an empty panel as {}.
   return session?.browsers?.some((b) => b?.url) ? session : undefined;
 }
 
