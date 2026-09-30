@@ -64,11 +64,13 @@ function corsResponse(response) {
   return newResponse;
 }
 
-function makeShortener(env) {
+/** Every link is tagged "juicebox" in the TinyURL account, as the page always did; `tags` adds to that. */
+function makeShortener(env, tags = []) {
   return tinyURLShortener({
     endpoint: env.TINYURL_ENDPOINT || 'https://api.tinyurl.com/create',
     apiKey: env.TINYURL_API_KEY,
-    domain: env.TINYURL_DOMAIN || 't.3dg.io'
+    domain: env.TINYURL_DOMAIN || 't.3dg.io',
+    tags: ['juicebox', ...tags]
   });
 }
 
@@ -186,7 +188,7 @@ async function handleMcpRequest(request, env) {
 
     // Build the deps object for tool handlers
     const browserUrl = env.BROWSER_URL || 'https://juicebox-mcp.workers.dev';
-    const shortenURL = makeShortener(env);
+    const shortenURL = makeShortener(env, ['juicebox-mcp']);
 
     // Fallback: ChatGPT doesn't echo mcp-session-id back, but sends x-openai-session on every request.
     // HMAC the raw token so it's not exposed in browser URLs. No secret, no fallback key.

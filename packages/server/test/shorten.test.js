@@ -32,7 +32,7 @@ describe('POST /shorten', () => {
     const [endpoint, init] = tinyurl.mock.calls[0];
     expect(endpoint).toBe('https://api.tinyurl.com/create');
     expect(init.headers.Authorization).toBe('Bearer test-key');
-    expect(JSON.parse(init.body)).toEqual({ url: LONG, domain: 't.3dg.io' });
+    expect(JSON.parse(init.body)).toEqual({ url: LONG, domain: 't.3dg.io', tags: ['juicebox'] });
   });
 
   it('without a TinyURL key answers with the long link', async () => {
