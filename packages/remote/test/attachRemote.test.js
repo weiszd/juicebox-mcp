@@ -799,7 +799,7 @@ describe('attachRemote: §5.2 request-style commands', () => {
     });
   });
 
-  it('getSession returns hic.toJSON() as the result', async () => {
+  it('getSession returns hic.toJSON()’s session as the result (every panel here has a map)', async () => {
     const fake = fakeHic();
     const { send } = await joinedWith(fake);
     const ack = await send({ type: 'getSession', requestId: 's1' });

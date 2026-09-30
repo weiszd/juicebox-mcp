@@ -50,10 +50,7 @@ const appliers = {
     const browser = onePanel(hic, panel, 'close_panel');
     if (hic.getAllBrowsers().length === 1) throw new Error('cannot close the last panel');
     const closed = panelLabel(hic, browser);
-    // The fallback covers juicebox.js builds without the export (upstream 4.7.0); it goes away
-    // when the peer dependency is raised (ADR-0007).
-    if (hic.deleteBrowser) hic.deleteBrowser(browser);
-    else browser.registry.delete(browser);
+    deletePanel(hic, browser);
     const remaining = hic.getAllBrowsers().map((b, i) => `${i + 1} (${datasetLabel(b)})`);
     return `closed ${closed}; remaining: ${remaining.join(' | ')}`;
   },
@@ -186,7 +183,15 @@ const appliers = {
     });
   },
 
-  [CommandType.GET_SESSION]: async (command, { hic }) => hic.toJSON(),
+  // One entry per panel, `{}` for one with no map, so a late joiner restores the empty panels too
+  // and positions stay aligned (ticket 33). juicebox.js's own session skips a panel without a map
+  // url; its entries are the rest, in order.
+  [CommandType.GET_SESSION]: async (command, { hic }) => {
+    const { browsers: withMap, ...session } = hic.toJSON();
+    let next = 0;
+    const browsers = hic.getAllBrowsers().map((browser) => (browser.dataset?.url ? withMap[next++] : {}));
+    return { ...session, browsers };
+  },
 
   [CommandType.GET_COMPRESSED_SESSION]: async (command, { hic }) => hic.compressedSession(),
 };
@@ -344,6 +349,15 @@ export async function newPanel(hic, container) {
   const browser = await hic.createBrowser(container, { width, height });
   hic.setCurrentBrowser(browser);
   return browser;
+}
+
+/**
+ * Close a panel. The fallback covers juicebox.js builds without the `deleteBrowser` export
+ * (upstream 4.7.0); it goes away when the peer dependency is raised (ADR-0007).
+ */
+export function deletePanel(hic, browser) {
+  if (hic.deleteBrowser) hic.deleteBrowser(browser);
+  else browser.registry.delete(browser);
 }
 
 function currentBrowser(hic) {

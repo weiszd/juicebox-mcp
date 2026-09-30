@@ -60,7 +60,7 @@ describe('protocol: catalogue', () => {
         'locusChange', 'colorScaleChange', 'backgroundColorChange', 'normalizationChange',
         'displayModeChange', 'mapLoad', 'controlMapLoad', 'trackLoad', 'trackRemove',
         'trackColorChange', 'trackNameChange', 'trackDataRangeChange',
-        'trackAutoscaleChange', 'trackLogScaleChange',
+        'trackAutoscaleChange', 'trackLogScaleChange', 'panelOpen', 'panelClose',
       ].sort(),
     );
   });

@@ -156,17 +156,23 @@ panel fails.
 | `addCallback('onDisplayMode')` | `displayModeChange` |
 | `addCallback('onMapLoaded')`, `('onControlMapLoaded')` | `mapLoad` / `controlMapLoad` (url, name read off `dataset`) |
 | `EventBus` `TrackXYPairLoad` / `TrackXYPairRemoval` / `TrackXYPairChange` | `trackLoad` / `trackRemove` / `track*Change` |
+| global `EventBus` `BrowserAdd` (fork build) | `panelOpen {panel}` — a peer opens an empty panel only at one past its last |
+| global `EventBus` `BrowserDelete` (fork build) | `panelClose {panel}` — the position it leaves; a peer never closes its last panel |
 
 Receiving a `syncEvent` sets `isSyncing = true` around the apply so the
 resulting callbacks are not re‑emitted. Same rule as the prototype.
 
 Every sync event carries `panel`, the sender's 1-based left-to-right position
 (what `list_panels` prints), and is applied to the receiver's panel at that
-position; a position the receiver lacks is dropped, except that a `mapLoad`
-for one past its last panel opens that panel and loads the map there. An event
-without `panel` applies to the current panel. The remote follows every panel
-in `getAllBrowsers()`, scanning again on `BrowserSelect` and after each command
-or catch-up it runs, so a host that creates a panel must select it.
+position; a position the receiver lacks is dropped. Panels are opened and
+closed on peers only by `panelOpen` / `panelClose`, so positions stay aligned,
+empty panels included; a `mapLoad` never opens one. An event without `panel`
+applies to the current panel. The remote follows every panel in
+`getAllBrowsers()`, scanning again on `BrowserAdd`, `BrowserSelect` and after
+each command or catch-up it runs, so a host that creates a panel must select
+it. A late joiner gets the empty panels too: a page's `getSession` answer has
+one entry per panel, `{}` for an empty one (the room's stored 24-hour session
+still skips them).
 `BrowserSelect` itself is not mirrored. Panels synced within one page each send
 their own `locusChange`. ADR-0008.
 

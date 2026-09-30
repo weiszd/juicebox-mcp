@@ -65,6 +65,10 @@ export const SyncEventType = Object.freeze({
   TRACK_DATA_RANGE_CHANGE: 'trackDataRangeChange',
   TRACK_AUTOSCALE_CHANGE: 'trackAutoscaleChange',
   TRACK_LOG_SCALE_CHANGE: 'trackLogScaleChange',
+  // A panel opened or closed on the sender, at `panel`; no other payload. A receiver opens
+  // an empty panel only at one past its last and never closes its last one (ADR-0008).
+  PANEL_OPEN: 'panelOpen',
+  PANEL_CLOSE: 'panelClose',
 });
 
 /** `code` values of an `error` message. */
