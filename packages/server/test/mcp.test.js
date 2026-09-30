@@ -759,7 +759,7 @@ describe('create_shareable_url', () => {
     const [endpoint, init] = tinyurl.mock.calls[0];
     expect(endpoint).toBe('https://api.tinyurl.com/create');
     expect(init.headers.Authorization).toBe('Bearer test-key');
-    expect(JSON.parse(init.body)).toEqual({ url: `${env.BROWSER_URL}?session=blob:abc123`, domain: 't.3dg.io' });
+    expect(JSON.parse(init.body)).toEqual({ url: `${env.BROWSER_URL}?session=blob:abc123`, domain: 't.3dg.io', tags: ['juicebox', 'juicebox-mcp'] });
     expect(text(result)).toContain('https://t.3dg.io/xyz');
   });
 });

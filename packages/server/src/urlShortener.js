@@ -21,9 +21,11 @@
  *
  */
 
-function tinyURLShortener({endpoint, apiKey, domain}) {
+/** `tags` label the links in the TinyURL account, as juicebox-web's own shortener tags its with "juicebox". */
+function tinyURLShortener({endpoint, apiKey, domain, tags}) {
 
     endpoint = endpoint || "https://api.tinyurl.com/create";
+    tags = tags || ['juicebox'];
 
     if (!apiKey) {
         console.warn("TinyURL API key not provided. URLs will not be shortened.");
@@ -35,8 +37,7 @@ function tinyURLShortener({endpoint, apiKey, domain}) {
             const response = await fetch(endpoint, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}`},
-                body: JSON.stringify({ url, domain: domain || 't.3dg.io' }),
-                tags: ['juicebox-mcp']
+                body: JSON.stringify({ url, domain: domain || 't.3dg.io', tags })
             });
 
             if (response.ok) {
