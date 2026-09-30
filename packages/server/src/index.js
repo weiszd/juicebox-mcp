@@ -7,6 +7,7 @@
  *   GET  /mcp             - 405 (SSE not supported; JSON responses only)
  *   DELETE /mcp           - MCP protocol (session termination)
  *   OPTIONS /mcp          - CORS preflight
+ *   POST /shorten         - the page's Share button: TinyURL through the Worker's key; Origin allow-list
  *   GET  /*               - 404 (the viewer is hosted by juicebox-web, not this Worker)
  */
 
@@ -63,6 +64,52 @@ function corsResponse(response) {
   return newResponse;
 }
 
+function makeShortener(env) {
+  return tinyURLShortener({
+    endpoint: env.TINYURL_ENDPOINT || 'https://api.tinyurl.com/create',
+    apiKey: env.TINYURL_API_KEY,
+    domain: env.TINYURL_DOMAIN || 't.3dg.io'
+  });
+}
+
+/**
+ * POST /shorten {url} → {data: {tiny_url}} (TinyURL's own shape, which juicebox-web's
+ * shortener already reads). TinyURL's API no longer answers browser origins, so the
+ * page's Share button shortens through here with the Worker's key. Only pages on
+ * ALLOWED_ORIGINS, and only for links to their own origin: not an open shortener.
+ */
+async function handleShorten(request, env) {
+  const origin = request.headers.get('Origin');
+  if (!env.ALLOWED_ORIGINS.includes(origin)) {
+    return new Response('Origin not allowed', { status: 403 });
+  }
+  const headers = {
+    'Access-Control-Allow-Origin': origin,
+    'Access-Control-Allow-Methods': 'POST, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type',
+    'Vary': 'Origin',
+  };
+  if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers });
+  if (request.method !== 'POST') return new Response('Method Not Allowed', { status: 405, headers });
+
+  let url;
+  try {
+    url = new URL((await request.json()).url);
+  } catch {
+    return Response.json({ error: 'body must be JSON {url} with an absolute url' }, { status: 400, headers });
+  }
+  if (url.origin !== origin) {
+    return Response.json({ error: 'only links to the requesting origin are shortened' }, { status: 400, headers });
+  }
+  try {
+    const tiny_url = await makeShortener(env)(url.href);
+    return Response.json({ data: { tiny_url } }, { headers });
+  } catch (error) {
+    logWarn('[shorten] TinyURL failed:', error.message);
+    return Response.json({ error: 'shortening failed' }, { status: 502, headers });
+  }
+}
+
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
@@ -95,6 +142,10 @@ export default {
         });
       }
       return corsResponse(await handleMcpRequest(request, env));
+    }
+
+    if (url.pathname === '/shorten') {
+      return handleShorten(request, env);
     }
 
     // The viewer is hosted by juicebox-web, not this Worker.
@@ -135,11 +186,7 @@ async function handleMcpRequest(request, env) {
 
     // Build the deps object for tool handlers
     const browserUrl = env.BROWSER_URL || 'https://juicebox-mcp.workers.dev';
-    const shortenURL = tinyURLShortener({
-      endpoint: env.TINYURL_ENDPOINT || 'https://api.tinyurl.com/create',
-      apiKey: env.TINYURL_API_KEY,
-      domain: env.TINYURL_DOMAIN || 't.3dg.io'
-    });
+    const shortenURL = makeShortener(env);
 
     // Fallback: ChatGPT doesn't echo mcp-session-id back, but sends x-openai-session on every request.
     // HMAC the raw token so it's not exposed in browser URLs. No secret, no fallback key.

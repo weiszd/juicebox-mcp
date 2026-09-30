@@ -252,6 +252,10 @@ juicebox-mcp/
 
 - `/ws` upgrade: reject unless `Origin` is on an allow‑list (`wrangler.toml`
   var). WebSockets are not covered by CORS.
+- `POST /shorten` (the page's Share button; TinyURL's API no longer answers
+  browser origins): same `Origin` allow‑list, CORS echoes that one origin, and
+  a page may only shorten links to its own origin. The TinyURL key is only ever
+  the Worker secret, never in the page bundle.
 - Room ids are server‑minted UUIDs (or HMAC of `x-openai-session`); a client
   cannot reach a browser it was not paired with.
 - `TINYURL_API_KEY` and `SESSION_HMAC_SECRET` are `wrangler secret`s; the
