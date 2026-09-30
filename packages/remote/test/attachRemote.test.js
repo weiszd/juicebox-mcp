@@ -41,7 +41,7 @@ FakeSocket.instances = [];
 
 // Stand-in for the juicebox.js namespace: one current browser whose public
 // surface members are spies. `mapLoaded: false` models a page with no map yet.
-function fakeHic({ mapLoaded = true, trackPairs = [], tracks2D = [] } = {}) {
+function fakeHic({ mapLoaded = true, genomeId, trackPairs = [], tracks2D = [] } = {}) {
   const colorScale = {
     threshold: 2000,
     getThreshold() {
@@ -50,7 +50,7 @@ function fakeHic({ mapLoaded = true, trackPairs = [], tracks2D = [] } = {}) {
     setColorComponents: vi.fn(),
   };
   const browser = {
-    dataset: mapLoaded ? { url: 'https://maps.example/a.hic' } : undefined,
+    dataset: mapLoaded ? { url: 'https://maps.example/a.hic', ...(genomeId ? { genomeId } : {}) } : undefined,
     controlDataset: undefined,
     coordinator: { addCallback: () => () => {} }, // sync events are covered in syncEvents.test.js
     loadHicFile: vi.fn(async (config) => {
@@ -583,6 +583,38 @@ describe('attachRemote: §5.2 track command rows', () => {
     const { send } = await joinedWith(fake);
     await send({ type: 'loadTrack', requestId: 'l2', url: 'https://tracks.example/a.bw' });
     expect(fake.browser.loadTracks).toHaveBeenCalledWith([{ url: 'https://tracks.example/a.bw' }]);
+  });
+
+  // The genes preset (ticket 32): the file follows the map's genome, chosen here per panel.
+  it.each([
+    ['hg19', 'https://hgdownload.soe.ucsc.edu/goldenPath/hg19/database/ncbiRefSeqSelect.txt.gz'],
+    ['mm10', 'https://hgdownload.soe.ucsc.edu/goldenPath/mm10/database/ncbiRefSeqSelect.txt.gz'],
+    ['dm6', 'https://hgdownload.soe.ucsc.edu/goldenPath/dm6/database/ncbiRefSeq.txt.gz'],
+  ])('loadTrack preset genes on a %s map loads that genome\'s RefSeq file as a refgene annotation', async (genomeId, url) => {
+    const fake = fakeHic({ genomeId });
+    const { send } = await joinedWith(fake);
+    const ack = await send({ type: 'loadTrack', requestId: 'g1', preset: 'genes', name: 'Refseq Select', color: { r: 0, g: 0, b: 0 } });
+    expect(fake.browser.loadTracks).toHaveBeenCalledWith([
+      { url, type: 'annotation', format: 'refgene', name: 'Refseq Select', color: 'rgb(0,0,0)' },
+    ]);
+    expect(ack.ok).toBe(true);
+  });
+
+  it('loadTrack preset genes on a map with no genome acks ok:false and loads nothing', async () => {
+    const fake = fakeHic();
+    const { send } = await joinedWith(fake);
+    const ack = await send({ type: 'loadTrack', requestId: 'g2', preset: 'genes' });
+    expect(ack.ok).toBe(false);
+    expect(ack.error).toMatch(/which genome/);
+    expect(fake.browser.loadTracks).not.toHaveBeenCalled();
+  });
+
+  it('loadTrack with an unknown preset acks ok:false', async () => {
+    const fake = fakeHic({ genomeId: 'hg19' });
+    const { send } = await joinedWith(fake);
+    const ack = await send({ type: 'loadTrack', requestId: 'g3', preset: 'nonsense' });
+    expect(ack.ok).toBe(false);
+    expect(ack.error).toMatch(/Unknown track preset/);
   });
 
   it('loadTrack before any map is loaded acks ok:false', async () => {

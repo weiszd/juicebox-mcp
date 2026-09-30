@@ -318,15 +318,11 @@ export function registerTools(mcpServer, deps) {
     }
   );
 
-  // Well-known track presets (resolved by keyword)
+  // Well-known track presets, resolved by keyword. The file depends on the map's genome,
+  // which only the page knows (and "all" may span genomes), so the keyword travels as
+  // `preset` and the remote picks the file per panel (ticket 32).
   const TRACK_PRESETS = {
-    genes: {
-      url: 'https://hgdownload.soe.ucsc.edu/goldenPath/hg38/database/ncbiRefSeqSelect.txt.gz',
-      name: 'Refseq Select',
-      color: { r: 0, g: 0, b: 0 },
-      type: 'annotation',
-      format: 'refgene'
-    }
+    genes: { name: 'Refseq Select', color: { r: 0, g: 0, b: 0 } }
   };
 
   // --- Tool: load_track ---
@@ -334,7 +330,7 @@ export function registerTools(mcpServer, deps) {
     'load_track',
     {
       title: 'Load Track',
-      description: 'Load a 1D or 2D track into Juicebox from a URL. Supports bigWig, bigBed, bedGraph, bed, bedpe, interact, annotation, and other standard genomic track formats. The format is auto-detected from the file extension. When the user asks for a "genes" track, use the keyword "genes" as the url — it will automatically load the NCBI RefSeq Select gene track.',
+      description: 'Load a 1D or 2D track into Juicebox from a URL. Supports bigWig, bigBed, bedGraph, bed, bedpe, interact, annotation, and other standard genomic track formats. The format is auto-detected from the file extension. When the user asks for a "genes" track, use the keyword "genes" as the url — it loads the NCBI RefSeq Select gene track for the genome of the map in that panel.',
       inputSchema: {
         url: z.string().describe('URL to the track file (e.g., bigWig, bigBed, bed, bedpe), or the keyword "genes" for the built-in gene track'),
         name: z.string().optional().describe('Optional display name for the track'),
@@ -343,17 +339,16 @@ export function registerTools(mcpServer, deps) {
       }
     },
     async ({ url, name, color, panel }) => {
-      const preset = TRACK_PRESETS[url.toLowerCase()];
-      const resolvedUrl = preset ? preset.url : url;
-      const resolvedName = name || (preset ? preset.name : undefined);
-      const resolvedColor = color ? hexToRgb(color) : (preset ? preset.color : undefined);
+      const presetKey = url.toLowerCase();
+      const preset = TRACK_PRESETS[presetKey];
+      const resolvedName = name || preset?.name;
+      const resolvedColor = color ? hexToRgb(color) : preset?.color;
 
-      const command = { type: 'loadTrack', url: resolvedUrl, name: resolvedName };
+      const command = preset ? { type: 'loadTrack', preset: presetKey, name: resolvedName } : { type: 'loadTrack', url, name: resolvedName };
       if (resolvedColor) command.color = resolvedColor;
-      if (preset?.type) command.trackType = preset.type;
-      if (preset?.format) command.format = preset.format;
       if (panel !== undefined) command.panel = panel;
-      return runCommand('load_track', command, `Loading track${resolvedName ? ` "${resolvedName}"` : ''} from ${resolvedUrl}`);
+      const source = preset ? `the ${presetKey} preset for the map's genome` : url;
+      return runCommand('load_track', command, `Loading track${resolvedName ? ` "${resolvedName}"` : ''} from ${source}`);
     }
   );
 

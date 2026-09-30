@@ -244,6 +244,24 @@ describe('toolCall notice', () => {
     ['close_panel', { panel: 2 }, CommandType.CLOSE_PANEL],
   ];
 
+  // The genes keyword travels as a preset: the file depends on the map's genome, which only
+  // the page knows (ticket 32).
+  it('load_track genes sends preset "genes" with the default name and colour, and no url', async () => {
+    const session = await newSession();
+    const page = await pageIn(session);
+    const call = callTool(session, 'load_track', { url: 'genes' });
+    const command = await nextCommand(page);
+    page.send({ type: MessageType.ACK, requestId: command.requestId, ok: true });
+    await call;
+    expect(command).toEqual({
+      type: CommandType.LOAD_TRACK,
+      requestId: command.requestId,
+      preset: 'genes',
+      name: 'Refseq Select',
+      color: { r: 0, g: 0, b: 0 },
+    });
+  });
+
   it.each(commandTools)('%s sends toolCall {name} to every page before its command', async (name, args, type) => {
     const session = await newSession();
     const a = await pageIn(session);
