@@ -13,7 +13,7 @@ export const MessageType = Object.freeze({
   ERROR: 'error', // room → page: {code, message?}
   ACK: 'ack', // page → room: {requestId, ok, result?, error?}
   TOOL_CALL: 'toolCall', // room → page: {name}
-  SYNC_EVENT: 'syncEvent', // either way: {syncType, ...payload}
+  SYNC_EVENT: 'syncEvent', // either way: {syncType, panel, ...payload}; panel is the sender's 1-based position (ADR-0008)
   PEER_SESSION_DATA: 'peerSessionData', // room → page: {session?|compressedSession?|error?}
   REQUEST_SESSION_FROM_PEER: 'requestSessionFromPeer', // page → room: {}; answered with peerSessionData
   SAVE_SESSION: 'saveSession', // page → room: {compressedSession}, kept as the room's saved session
@@ -45,7 +45,11 @@ export const CommandType = Object.freeze({
   GET_COMPRESSED_SESSION: 'getCompressedSession',
 });
 
-/** `syncType` values carried by a `syncEvent` (§5.3). */
+/**
+ * `syncType` values carried by a `syncEvent` (§5.3). Every sync event also carries `panel`,
+ * the 1-based left-to-right position of the panel it happened in; one without it (from a
+ * remote before ADR-0008) is for the receiver's current panel.
+ */
 export const SyncEventType = Object.freeze({
   LOCUS_CHANGE: 'locusChange',
   COLOR_SCALE_CHANGE: 'colorScaleChange',

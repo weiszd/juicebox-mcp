@@ -78,6 +78,18 @@ describe('sync events', () => {
     expect(await join(a, room)).toEqual({ type: MessageType.JOINED, room });
     expect(await join(elsewhere, otherRoom)).toEqual({ type: MessageType.JOINED, room: otherRoom });
   });
+
+  it('the sender’s panel position reaches the peer unchanged (ADR-0008)', async () => {
+    const a = await openPage();
+    const { room } = await join(a);
+    const b = await openPage(`?room=${room}`);
+    await join(b, room);
+    const inPanel2 = { type: MessageType.SYNC_EVENT, syncType: SyncEventType.NORMALIZATION_CHANGE, panel: 2, normalization: 'KR' };
+
+    a.send(inPanel2);
+
+    expect(await b.next()).toEqual(inPanel2);
+  });
 });
 
 describe('Origin allow-list', () => {

@@ -85,6 +85,7 @@ function fakeHic({ mapLoaded = true } = {}) {
     current: fakeBrowser(mapLoaded ? { url: pageSession.browsers[0].url, name: 'page' } : undefined),
     session: mapLoaded ? pageSession : { browsers: [] },
     getCurrentBrowser: () => hic.current,
+    getAllBrowsers: () => (hic.current ? [hic.current] : []),
     compressedSession: vi.fn(() => compress(hic.session)),
     restoreSession: vi.fn(async (container, session) => {
       await Promise.resolve();
@@ -337,7 +338,7 @@ describe('catch-up: the restore is guarded', () => {
     await settle();
     hic.current.coordinator.fire('onNormalizationChange', { normalization: 'VC' });
     expect(ofType(socket, 'syncEvent')).toEqual([
-      { type: 'syncEvent', syncType: 'normalizationChange', normalization: 'VC' },
+      { type: 'syncEvent', syncType: 'normalizationChange', panel: 1, normalization: 'VC' },
     ]);
   });
 });

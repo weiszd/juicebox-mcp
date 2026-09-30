@@ -26,9 +26,7 @@ const appliers = {
     // replaced (ADR-0007).
     let browser;
     if (panel === 'new') {
-      const { width, height } = currentBrowser(hic).config;
-      browser = await hic.createBrowser(container, { width, height });
-      hic.setCurrentBrowser(browser);
+      browser = await newPanel(hic, container);
     } else {
       browser = onePanel(hic, panel, 'load_map');
     }
@@ -335,6 +333,17 @@ function locusString({ dataset, state, contactMatrixView }) {
   const { x, y } = state.getLocus(dataset, contactMatrixView.getViewDimensions());
   const range = ({ chr, start, end }) => `${chr}:${(start + 1).toLocaleString('en-US')}-${end.toLocaleString('en-US')}`;
   return `${range(x)} ${range(y)}`;
+}
+
+/**
+ * Open a panel right of the others, the size of the current one, and select it, the way
+ * juicebox-web's clone button does. Resolves to its browser, with no map yet.
+ */
+export async function newPanel(hic, container) {
+  const { width, height } = currentBrowser(hic).config;
+  const browser = await hic.createBrowser(container, { width, height });
+  hic.setCurrentBrowser(browser);
+  return browser;
 }
 
 function currentBrowser(hic) {
