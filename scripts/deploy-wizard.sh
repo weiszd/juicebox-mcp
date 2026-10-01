@@ -367,7 +367,7 @@ stage "A page to drive"
 if [[ -n "$DEPLOY_ENV" ]]; then
   say "Join links from $WORKER_NAME open $PAGE_URL (BROWSER_URL in [env.$DEPLOY_ENV]);"
   say "nothing is deployed to the production site. Run a local juicebox-web with the widget:"
-  step "cd ../juicebox-web-16 (the fork worktree on branch ticket/16)"
+  step "cd ../juicebox-web (the weiszd fork, master carries the room widget)"
   step "VITE_WS_URL=$WS_URL npm run dev   # vite on http://localhost:5173"
   PAGE_BASE="$PAGE_URL"
   pause "Press Enter once http://localhost:5173/ loads and shows the room item next to Share"

@@ -4,7 +4,7 @@
 # Direct upload, not a git build: the branch depends on local tarballs (juicebox.js
 # 4.6.0 from the fork, @aidenlab/juicebox-remote) that are not published.
 #
-#   WEB_DIR=../juicebox-web-16 scripts/deploy-web-dev.sh
+#   WEB_DIR=../juicebox-web scripts/deploy-web-dev.sh
 #
 # Vite inlines VITE_* vars at build time and a direct upload never sees the Pages
 # project's variables, so everything the page needs is passed here. The Share
