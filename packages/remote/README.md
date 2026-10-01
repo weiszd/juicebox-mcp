@@ -8,7 +8,7 @@ can drive it and every page in the room stays in sync.
 npm install juicebox.js @aidenlab/juicebox-remote
 ```
 
-`juicebox.js` is a peer dependency (`>=4.6.0 <5`). The package never imports it: you pass in
+`juicebox.js` is a peer dependency (`>=4.9.0-mcp.0 <5`: the fork build on the npm dist-tag `mcp`, until the hooks it needs are in an upstream release). The package never imports it: you pass in
 your own namespace import, so the viewer is bundled once. Plain ESM, no build step.
 
 ## Embed example

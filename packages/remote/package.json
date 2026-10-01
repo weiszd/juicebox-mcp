@@ -1,6 +1,6 @@
 {
   "name": "@aidenlab/juicebox-remote",
-  "version": "2.0.1-next.0",
+  "version": "2.0.1-next.1",
   "type": "module",
   "description": "Attach a juicebox.js viewer to a juicebox-mcp room so an LLM can drive it and peers stay in sync",
   "license": "MIT",
@@ -34,7 +34,7 @@
     "src/"
   ],
   "peerDependencies": {
-    "juicebox.js": ">=4.6.0 <5"
+    "juicebox.js": ">=4.9.0-mcp.0 <5"
   },
   "publishConfig": {
     "access": "public"
