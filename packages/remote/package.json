@@ -14,11 +14,11 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/aidenlab/juicebox-mcp.git",
+    "url": "git+https://github.com/weiszd/juicebox-mcp.git",
     "directory": "packages/remote"
   },
   "bugs": {
-    "url": "https://github.com/aidenlab/juicebox-mcp/issues"
+    "url": "https://github.com/weiszd/juicebox-mcp/issues"
   },
   "keywords": [
     "juicebox",
