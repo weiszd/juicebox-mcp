@@ -27,11 +27,13 @@ npm run test:run -- -t "substring of name"                # one test
 
 # Server
 npm run dev:server             # wrangler dev on :8787
-npm run deploy:server          # wrangler deploy
-scripts/deploy-wizard.sh       # maintainer deploy + onboarding, interactive (login, secrets, Pages var, clients)
+npm run deploy:server          # wrangler deploy (the prototype Worker on jbmcp.3dg.io)
+(cd packages/server && npx wrangler deploy --env dev)   # the Juicebot dev Worker, juicebot-mcp-dev.3dg.io
+scripts/deploy-web-dev.sh      # build ../juicebox-web (fork master) → Pages juicebot-web-dev, juicebot-dev.3dg.io
+scripts/deploy-wizard.sh       # maintainer deploy + onboarding, interactive (login, secrets, Pages var, clients); DEPLOY_ENV=dev
 ```
 
-Server config lives in `packages/server/wrangler.toml` (`[vars]`: `BROWSER_URL`, `TINYURL_DOMAIN`, `TINYURL_ENDPOINT`, `ALLOWED_ORIGINS` — the exact-match `Origin` allow-list for `/ws`). It declares the `jbmcp.3dg.io` custom domain. Secrets `TINYURL_API_KEY` and `SESSION_HMAC_SECRET` are set with `wrangler secret put` (locally in `packages/server/.dev.vars`, from `.dev.vars.example`); without `SESSION_HMAC_SECRET` the `x-openai-session` (ChatGPT) path fails rather than using a default key.
+Server config lives in `packages/server/wrangler.toml` (`[vars]`: `BROWSER_URL`, `TINYURL_DOMAIN`, `TINYURL_ENDPOINT`, `ALLOWED_ORIGINS` — the exact-match `Origin` allow-list for `/ws`). It declares the `jbmcp.3dg.io` custom domain. Development runs on the separate **Juicebot dev** stack (`[env.dev]`: Worker `juicebot-mcp-dev` at juicebot-mcp-dev.3dg.io, page at juicebot-dev.3dg.io); the earlier demo stack (`[env.v2]`, juicebox-mcp-v2 + juicebox-v2.3dg.io) is frozen at tag `demo-2026-10` and is not redeployed. "Juicebot" is the product name of the AI-enabled juicebox; the dev stack carries a `-dev` suffix everywhere so the production release only adds the un-suffixed names. Secrets `TINYURL_API_KEY` and `SESSION_HMAC_SECRET` are set with `wrangler secret put` (locally in `packages/server/.dev.vars`, from `.dev.vars.example`); without `SESSION_HMAC_SECRET` the `x-openai-session` (ChatGPT) path fails rather than using a default key.
 
 ## Architecture
 
