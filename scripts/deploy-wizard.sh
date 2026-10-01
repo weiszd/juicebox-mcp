@@ -195,18 +195,19 @@ TOTAL_STAGES=12
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SERVER_DIR="$REPO_ROOT/packages/server"
-# DEPLOY_ENV=v2 deploys the side-by-side trial Worker "juicebox-mcp-v2" on its
-# *.workers.dev address (wrangler.toml [env.v2]) and leaves the prototype alone.
+# DEPLOY_ENV=dev deploys the "Juicebot dev" Worker juicebot-mcp-dev at
+# https://juicebot-mcp-dev.3dg.io (wrangler.toml [env.dev]), paired with the page
+# at https://juicebot-dev.3dg.io/. DEPLOY_ENV=v2 is the frozen demo stack
+# (tag demo-2026-10); redeploy it only for a hotfix from that tag.
 DEPLOY_ENV="${DEPLOY_ENV:-}"
-if [[ -n "$DEPLOY_ENV" ]]; then
-  WORKER_NAME="juicebox-mcp-$DEPLOY_ENV"; BASE_URL=""   # learned after deploy
-else
-  WORKER_NAME="juicebox-mcp"; BASE_URL="https://jbmcp.3dg.io"
-fi
+case "$DEPLOY_ENV" in
+  "")  WORKER_NAME="juicebox-mcp";     BASE_URL="https://jbmcp.3dg.io";          PAGE_URL="https://aidenlab.org/juicebox/" ;;
+  dev) WORKER_NAME="juicebot-mcp-dev"; BASE_URL="https://juicebot-mcp-dev.3dg.io"; PAGE_URL="https://juicebot-dev.3dg.io/" ;;
+  v2)  WORKER_NAME="juicebox-mcp-v2";  BASE_URL="https://juicebox-mcp-v2.aidenlab.workers.dev"; PAGE_URL="https://juicebox-v2.3dg.io/" ;;
+  *)   WORKER_NAME="juicebox-mcp-$DEPLOY_ENV"; BASE_URL=""; PAGE_URL="http://localhost:5173/" ;;   # learned after deploy
+esac
 MCP_URL="$BASE_URL/mcp"
 WS_URL="wss://${BASE_URL#https://}/ws"
-# BROWSER_URL in wrangler.toml: production, or the local juicebox-web dev server for [env.v2].
-if [[ -n "$DEPLOY_ENV" ]]; then PAGE_URL="http://localhost:5173/"; else PAGE_URL="https://aidenlab.org/juicebox/"; fi
 RESULTS_FILE="${RESULTS_FILE:-${TMPDIR:-/tmp}/juicebox-mcp-deploy-results.md}"
 RESULTS=()
 
@@ -250,7 +251,7 @@ else
   warn "The Worker name is the prototype's: deploying replaces the running prototype."
   warn "wrangler.toml sets workers_dev = false: the *.workers.dev URL stops answering,"
   warn "so any client still pointed there must move to $MCP_URL."
-  note "To try v2 next to the prototype instead, re-run with DEPLOY_ENV=v2."
+  note "For the Juicebot dev stack instead, re-run with DEPLOY_ENV=dev."
 fi
 confirm "Go ahead on those terms?" || { say "Stopped. Nothing changed."; exit 0; }
 
