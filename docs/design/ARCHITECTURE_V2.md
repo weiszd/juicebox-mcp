@@ -31,6 +31,10 @@ authentication beyond what §6.4 lists.
 
 ## 3. Components
 
+![Components: MCP client, Worker with room, web pages with remote and viewer](architecture-v2.png)
+
+*Source: `architecture-v2.excalidraw` (open at excalidraw.com to edit; the PNG is a render of it).*
+
 ```
                  ┌────────────────────────────────────────────────┐
  MCP client ───► │ juicebox-mcp (Cloudflare Worker)                │
