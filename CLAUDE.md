@@ -9,7 +9,7 @@ AI control for the juicebox.js Hi-C contact map viewer, as a plug-in. Two packag
 - `packages/remote` — `@aidenlab/juicebox-remote`, a browser library that attaches a juicebox.js viewer to a room on the server so an LLM can drive it and peers stay in sync.
 - `packages/server` — the Cloudflare Worker MCP server (`/mcp`) plus a Durable Object per room (`/ws`). Deployed with wrangler, never published.
 
-The viewer itself lives upstream in juicebox.js (the fork build `juicebox.js@mcp`, 4.9.0-mcp.x, until the hooks land upstream), and the hosting web page is juicebox-web. Neither is vendored here. The design is `docs/design/ARCHITECTURE_V2.md`; decisions are in `docs/adr/`.
+The viewer itself lives upstream in juicebox.js (the fork build `juicebox.js@mcp`, 4.10.0-mcp.x, until the hooks land upstream), and the hosting web page is juicebox-web. Neither is vendored here. The design is `docs/design/ARCHITECTURE_V2.md`; decisions are in `docs/adr/`.
 
 The pre-v2 prototype (Node `.mcpb` server, vendored viewer, Vite frontend) is preserved on branch `prototype` and tag `v1.1.0-prototype`. Do not port code from it without checking the design first.
 
@@ -66,7 +66,7 @@ Publishable to npm as plain ESM, no build step; exports `.` (`src/attachRemote.j
 - `src/sessionToRestore.js` — decodes and validates the room's saved session.
 - `src/WebSocketClient.js` — the prototype's reconnecting client, with an injected socket factory.
 
-The package never imports juicebox.js: the host passes its namespace as `hic`, and `juicebox.js >=4.9.0-mcp.0 <5` is a peer dependency (the fork build, published from weiszd/juicebox.js to the `mcp` dist-tag; a plain range would never pick a pre-release). Tests drive `attachRemote` with a fake `hic` and a fake socket. Publishing: a GitHub release tagged `remote-v<version>` runs `.github/workflows/publish-remote.yml` (npm trusted publishing).
+The package never imports juicebox.js: the host passes its namespace as `hic`, and `juicebox.js >=4.10.0-mcp.1 <5` is a peer dependency (the fork build, published from weiszd/juicebox.js to the `mcp` dist-tag; a plain range would never pick a pre-release). Tests drive `attachRemote` with a fake `hic` and a fake socket. Publishing: a GitHub release tagged `remote-v<version>` runs `.github/workflows/publish-remote.yml` (npm trusted publishing).
 
 ### Adding or changing a tool
 
