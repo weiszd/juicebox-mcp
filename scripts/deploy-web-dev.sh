@@ -14,7 +14,7 @@
 # [env.v2] BROWSER_URL points here and ALLOWED_ORIGINS lists this origin).
 set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-WEB_DIR="${WEB_DIR:-$REPO_ROOT/../juicebox-web-16}"
+WEB_DIR="${WEB_DIR:-$REPO_ROOT/../juicebox-web}"
 PROJECT="${PROJECT:-juicebox-web-dev}"
 VITE_WS_URL="${VITE_WS_URL:-wss://juicebox-mcp-v2.aidenlab.workers.dev/ws}"
 cd "$WEB_DIR"
