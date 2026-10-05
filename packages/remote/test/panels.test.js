@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { attachRemote } from '../src/attachRemote.js';
 
-// Panels (CONTEXT.md, ADR-0007): commands addressed by `panel` to one of several
+// Panels (GLOSSARY.md, ADR-0007): commands addressed by `panel` to one of several
 // juicebox.js browsers in the page, driven through attachRemote with fakes.
 
 class FakeSocket {

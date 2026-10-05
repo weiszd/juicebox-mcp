@@ -234,7 +234,7 @@ async function zoom(browser, direction, { centerX, centerY }) {
 }
 
 /**
- * The browsers a command's `panel` addresses (CONTEXT.md: panel): a 1-based position
+ * The browsers a command's `panel` addresses (GLOSSARY.md: panel): a 1-based position
  * from the left, "all", or a map name matched case-insensitively that must be unique.
  * Omitted means the current panel, and is an error when more than one panel is open;
  * that error offers "all" only to a command that takes it (`acceptsAll`).

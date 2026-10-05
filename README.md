@@ -11,7 +11,7 @@ MCP client ──/mcp──▶ Worker ──▶ room (Durable Object) ──/ws�
 
 The page is [juicebox-web](https://github.com/aidenlab/juicebox-web), which shows a room widget when it is built with `VITE_WS_URL`. The viewer and the page are separate repositories; neither is vendored here.
 
-Read next: [`CONTEXT.md`](CONTEXT.md) (glossary: room, join link, snapshot link, session, …), [`docs/design/ARCHITECTURE_V2.md`](docs/design/ARCHITECTURE_V2.md) (the design), [`docs/adr/`](docs/adr/) (decisions).
+Read next: [`GLOSSARY.md`](GLOSSARY.md) (glossary: room, join link, snapshot link, session, …), [`docs/design/ARCHITECTURE_V2.md`](docs/design/ARCHITECTURE_V2.md) (the design), [`docs/adr/`](docs/adr/) (decisions).
 
 ## Connect an MCP client
 

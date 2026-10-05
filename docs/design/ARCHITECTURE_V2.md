@@ -4,7 +4,7 @@ Status: **accepted**, 2026‑09‑28 (proposed 2026‑09‑27). Supersedes §6 o
 `docs/development-notes/PORTING_MCP_TO_JUICEBOX_JS.md` (now on branch
 `prototype` only), which stays as the historical record of the prototype. Decisions below were taken by D. Weisz;
 the hard‑to‑reverse ones are recorded in `docs/adr/`, the vocabulary in
-`CONTEXT.md`. §11 lists the answers to the open questions.
+`GLOSSARY.md`. §11 lists the answers to the open questions.
 
 ## 1. Goal
 
@@ -120,7 +120,7 @@ renders it from `onStatus` / `remote.joinUrl`.
 
 ### 5.2 Commands → public surface
 
-`browser` is the panel the command's `panel` addresses (ADR‑0007, CONTEXT.md:
+`browser` is the panel the command's `panel` addresses (ADR‑0007, GLOSSARY.md:
 panel): a 1‑based position in `hic.getAllBrowsers()` (left to right), a map name
 only one panel shows, or `"all"` (every panel, where the table says so). Omitted,
 it is the current browser when one panel is open and an error listing the panels
@@ -297,7 +297,7 @@ has state (a live peer or a saved session) the room wins**, and the snapshot
 only seeds an empty room. juicebox.js ignores a lone `?room=` (its query
 adapter claims a session only when `url` is present). The parameter is
 renamed from `sessionId` to `room` because "session" already means the
-serialized JSON in juicebox.js's `CONTEXT.md` and the MCP transport's
+serialized JSON in juicebox.js's `GLOSSARY.md` and the MCP transport's
 `mcp-session-id`; three meanings on one word was the source of the conflation.
 
 ## 8. juicebox-web integration
