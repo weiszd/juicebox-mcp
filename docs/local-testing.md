@@ -165,6 +165,36 @@ The relay's full log is also kept in `~/Library/Preferences/.wrangler/logs/` (ne
 `Ctrl-C` in each terminal. Stop the tunnel when you are not testing: while it runs,
 anyone with the address can call your relay.
 
+## Preview the join card on its own (none of the above needed)
+
+The card Claude shows for `get_juicebox_url` is `packages/server/src/mcp/juiceboxView.js`.
+It only fills in when a host hands it a tool result, so it cannot be opened directly. To
+work on it without Claude, the relay, the page or the tunnel:
+
+```bash
+cd /Users/turner/JuiceboxDevelopment/weiszd/juicebox-mcp
+node scripts/preview-view.mjs
+```
+
+Open `http://localhost:5199/`. Edit `juiceboxView.js`, save, refresh the browser: the
+preview re-reads the file on every load. `Ctrl-C` stops it.
+
+| Address | Shows |
+|---|---|
+| `http://localhost:5199/` | The card as in Claude Desktop |
+| `http://localhost:5199/?platform=web` | The card in any other host |
+| `http://localhost:5199/?state=waiting` | Before the join link arrives |
+| `http://localhost:5199/?state=nolink` | A tool result with no link in it |
+
+What is fake: the room is `PREVIEW123`, the QR code is a real one for that link, and
+pressing **Open Juicebox** shows an alert with the link the host would open. The preview
+fills the browser window, while Claude shows the card in a narrow frame, so narrow the
+window to judge layout. `PORT=5200 node scripts/preview-view.mjs` uses another port.
+
+The preview only imitates what a host reports. Before calling a change done, check it in
+Claude Desktop, in a new chat. If the old card still appears, remove the connector and add
+it again.
+
 ## Automated tests (none of the above needed)
 
 ```bash
