@@ -80,6 +80,7 @@ export default {
     // --- WebSocket upgrade → the room's Durable Object ---
     if (url.pathname === '/ws' && request.headers.get('Upgrade') === 'websocket') {
       if (!env.ALLOWED_ORIGINS.includes(request.headers.get('Origin'))) {
+        logWarn(`[WS] refused Origin: ${request.headers.get('Origin')}`);
         return new Response('Origin not allowed', { status: 403 });
       }
       // No room given: mint one. The Durable Object reads it back from the URL.
