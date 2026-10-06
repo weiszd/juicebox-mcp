@@ -48,4 +48,8 @@ createServer(async (req, res) => {
   } catch (e) {
     res.writeHead(500, { 'content-type': 'text/plain; charset=utf-8' }).end(String(e?.stack || e));
   }
-}).listen(PORT, () => console.log(`card preview: http://localhost:${PORT}/  (?platform=web, ?state=waiting, ?state=nolink)`));
+}).on('error', (e) => {
+  if (e.code !== 'EADDRINUSE') throw e;
+  console.error(`Port ${PORT} is in use (is the preview already running?). Open http://localhost:${PORT}/ or pick another: PORT=${PORT + 1} node scripts/preview-view.mjs`);
+  process.exit(1);
+}).listen(PORT,() => console.log(`card preview: http://localhost:${PORT}/  (?platform=web, ?state=waiting, ?state=nolink)`));
