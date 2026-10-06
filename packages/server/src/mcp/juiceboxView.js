@@ -31,7 +31,7 @@ export const VIEW_HTML = `<!DOCTYPE html>
   details > * { margin-top: 6px; }
 </style></head>
 <body>
-<!-- PROTOTYPE (proto/first-launch): one message or one button; QR, room and link collapsed; host context shown for the test. -->
+<!-- PROTOTYPE (proto/first-launch): one message or one button; QR, room and link collapsed. -->
 <div id="text">
   <div id="status">Waiting for the join link…</div>
   <button id="open" hidden>Open Juicebox</button>
@@ -41,7 +41,6 @@ export const VIEW_HTML = `<!DOCTYPE html>
     <div><img id="qr" alt="QR code of the join link" hidden></div>
     <div id="hint" hidden>Scan the QR code to open the same room on a phone or another device.</div>
   </details>
-  <details id="debug" open><summary>PROTOTYPE: what the card knows about its host</summary><pre id="ctx" style="white-space:pre-wrap;font-size:11px"></pre></details>
 </div>
 <script type="module">
   import { App } from "${APP_CLIENT}";
@@ -50,14 +49,8 @@ export const VIEW_HTML = `<!DOCTYPE html>
   let joinUrl, room, qrPng;
   const open = (e) => { e?.preventDefault(); if (joinUrl) app.openLink({ url: joinUrl }); };
   const render = () => {
-    let ctx, host;
-    try { ctx = app.getHostContext?.(); } catch (e) { ctx = { error: String(e) }; }
-    try { host = app.getHostVersion?.(); } catch (e) { host = { error: String(e) }; }
-    $("ctx").textContent = JSON.stringify({
-      platform: ctx?.platform, hostInfo: host, hostUserAgent: ctx?.userAgent, displayMode: ctx?.displayMode,
-      availableDisplayModes: ctx?.availableDisplayModes, deviceCapabilities: ctx?.deviceCapabilities,
-      navigatorUserAgent: navigator.userAgent, hostContextKeys: ctx ? Object.keys(ctx) : null
-    }, null, 2);
+    let ctx;
+    try { ctx = app.getHostContext?.(); } catch (e) { ctx = undefined; }
     if (!joinUrl) return;
     const desktop = ctx?.platform === "desktop";
     $("status").textContent = desktop
