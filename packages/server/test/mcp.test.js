@@ -104,6 +104,7 @@ describe('initialize', () => {
     expect(res.headers.get('mcp-session-id')).toMatch(ROOM_ID);
     const body = await res.json();
     expect(body.result.serverInfo.name).toBe('juicebox-server');
+    expect(body.result.serverInfo.icons[0].src).toBe('https://aidenlab.org/favicon.ico');
   });
 
   it('x-openai-session binds the same room id every time, and a different one per value', async () => {
