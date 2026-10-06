@@ -22,36 +22,63 @@ export const TOOL_META = { ui: { resourceUri: VIEW_URI }, 'ui/resourceUri': VIEW
 export const VIEW_HTML = `<!DOCTYPE html>
 <html><head><meta charset="utf-8"><meta name="color-scheme" content="light dark"><title>Juicebox</title>
 <style>
-  body { font: 14px system-ui, sans-serif; margin: 0; padding: 12px; display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
+  body { font: 14px system-ui, sans-serif; margin: 0; padding: 12px; }
   img { width: 160px; height: 160px; image-rendering: pixelated; background: #fff; border-radius: 6px; }
   #text { display: flex; flex-direction: column; gap: 8px; min-width: 200px; }
   a { word-break: break-all; }
-  button { align-self: flex-start; padding: 6px 12px; }
+  button { align-self: flex-start; padding: 10px 18px; font-size: 15px; }
+  details { font-size: 12px; opacity: .8; }
+  details > * { margin-top: 6px; }
 </style></head>
 <body>
-<img id="qr" alt="QR code of the join link" hidden>
+<!-- PROTOTYPE (proto/first-launch): one message or one button; QR, room and link collapsed; host context shown for the test. -->
 <div id="text">
   <div id="status">Waiting for the join link…</div>
-  <a id="link" href="#" hidden></a>
   <button id="open" hidden>Open Juicebox</button>
-  <div id="hint" hidden>Scan the QR code to open the same room on a phone or another device.</div>
+  <details id="more" hidden><summary>Other ways to open</summary>
+    <div id="room"></div>
+    <a id="link" href="#"></a>
+    <div><img id="qr" alt="QR code of the join link" hidden></div>
+    <div id="hint" hidden>Scan the QR code to open the same room on a phone or another device.</div>
+  </details>
+  <details id="debug" open><summary>PROTOTYPE: what the card knows about its host</summary><pre id="ctx" style="white-space:pre-wrap;font-size:11px"></pre></details>
 </div>
 <script type="module">
   import { App } from "${APP_CLIENT}";
   const $ = (id) => document.getElementById(id);
   const app = new App({ name: "Juicebox", version: "1.0.0" });
-  let joinUrl;
+  let joinUrl, room, qrPng;
   const open = (e) => { e?.preventDefault(); if (joinUrl) app.openLink({ url: joinUrl }); };
+  const render = () => {
+    let ctx, host;
+    try { ctx = app.getHostContext?.(); } catch (e) { ctx = { error: String(e) }; }
+    try { host = app.getHostVersion?.(); } catch (e) { host = { error: String(e) }; }
+    $("ctx").textContent = JSON.stringify({
+      platform: ctx?.platform, hostInfo: host, hostUserAgent: ctx?.userAgent, displayMode: ctx?.displayMode,
+      availableDisplayModes: ctx?.availableDisplayModes, deviceCapabilities: ctx?.deviceCapabilities,
+      navigatorUserAgent: navigator.userAgent, hostContextKeys: ctx ? Object.keys(ctx) : null
+    }, null, 2);
+    if (!joinUrl) return;
+    const desktop = ctx?.platform === "desktop";
+    $("status").textContent = desktop
+      ? "Juicebox should open in the panel on the right; if it does not, press Open Juicebox. If Claude asks, choose \u201cAlways allow for this website\u201d."
+      : "Juicebox is ready.";
+    $("open").hidden = false;
+    $("room").textContent = "Juicebox room " + room;
+    $("link").textContent = desktop ? "Open in a separate browser window" : joinUrl; $("link").href = joinUrl;
+    if (qrPng) { $("qr").src = "data:image/png;base64," + qrPng; $("qr").hidden = false; $("hint").hidden = false; }
+    $("more").hidden = false;
+  };
   app.ontoolresult = ({ structuredContent: sc, content }) => {
     joinUrl = sc?.joinUrl ?? content?.find((c) => c.type === "text")?.text.match(/https?:\\/\\/\\S+/)?.[0];
     if (!joinUrl) { $("status").textContent = "No join link in the tool result."; return; }
-    $("status").textContent = "Juicebox room " + (sc?.room ?? new URL(joinUrl).searchParams.get("room"));
-    $("link").textContent = joinUrl; $("link").href = joinUrl; $("link").hidden = false;
-    $("open").hidden = false;
-    if (sc?.qrPng) { $("qr").src = "data:image/png;base64," + sc.qrPng; $("qr").hidden = false; $("hint").hidden = false; }
+    room = sc?.room ?? new URL(joinUrl).searchParams.get("room"); qrPng = sc?.qrPng;
+    render();
   };
+  app.onhostcontextchanged = render;
   $("link").onclick = open;
   $("open").onclick = open;
   await app.connect();
+  render();
 </script>
 </body></html>`;
