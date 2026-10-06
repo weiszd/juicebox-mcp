@@ -115,8 +115,7 @@ claude mcp add --transport http juicebox-local http://localhost:8787/mcp
 1. Say "Hello, Juicebot". Claude calls `get_juicebox_url` and gets a join link,
    `http://localhost:5173/?room=<ROOM>`.
 2. In Claude Desktop the page opens in the panel beside the chat; if it does not, press
-   **Open Juicebox** on the card. Elsewhere, open the link in a browser on this Mac (it is
-   also under "Other ways to open" on the card).
+   **Open Juicebox** on the card. Elsewhere, open the link in a browser on this Mac.
 3. Ask for a map, e.g. "load a GM12878 Hi-C map". It draws in that page.
 
 Use `localhost` in the link, not `127.0.0.1`: the Vite dev server only answers on `localhost`.

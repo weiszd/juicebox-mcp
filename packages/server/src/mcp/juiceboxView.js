@@ -35,12 +35,14 @@ export const VIEW_HTML = `<!DOCTYPE html>
 <div id="text">
   <div id="status">Waiting for the join link…</div>
   <button id="open" hidden>Open Juicebox</button>
+  <!-- "Other ways to open" is switched off, not removed; restore it together with the commented lines in the script below.
   <details id="more" hidden><summary>Other ways to open</summary>
     <div id="room"></div>
     <a id="link" href="#"></a>
     <div><img id="qr" alt="QR code of the join link" hidden></div>
     <div id="hint" hidden>Scan the QR code to open the same room on a phone or another device.</div>
   </details>
+  -->
 </div>
 <script type="module">
   import { App } from "${APP_CLIENT}";
@@ -57,10 +59,11 @@ export const VIEW_HTML = `<!DOCTYPE html>
       ? "Juicebox should open in the panel on the right; if it does not, press Open Juicebox. If Claude asks, choose \u201cAlways allow for this website\u201d."
       : "Juicebox is ready.";
     $("open").hidden = false;
-    $("room").textContent = "Juicebox room " + room;
-    $("link").textContent = desktop ? "Open in a separate browser window" : joinUrl; $("link").href = joinUrl;
-    if (qrPng) { $("qr").src = "data:image/png;base64," + qrPng; $("qr").hidden = false; $("hint").hidden = false; }
-    $("more").hidden = false;
+    // "Other ways to open" (switched off):
+    // $("room").textContent = "Juicebox room " + room;
+    // $("link").textContent = desktop ? "Open in a separate browser window" : joinUrl; $("link").href = joinUrl;
+    // if (qrPng) { $("qr").src = "data:image/png;base64," + qrPng; $("qr").hidden = false; $("hint").hidden = false; }
+    // $("more").hidden = false;
   };
   app.ontoolresult = ({ structuredContent: sc, content }) => {
     joinUrl = sc?.joinUrl ?? content?.find((c) => c.type === "text")?.text.match(/https?:\\/\\/\\S+/)?.[0];
@@ -69,7 +72,7 @@ export const VIEW_HTML = `<!DOCTYPE html>
     render();
   };
   app.onhostcontextchanged = render;
-  $("link").onclick = open;
+  // $("link").onclick = open; // "Other ways to open" (switched off)
   $("open").onclick = open;
   await app.connect();
   render();
