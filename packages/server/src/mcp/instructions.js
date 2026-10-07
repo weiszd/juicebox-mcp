@@ -13,9 +13,9 @@ Session start:
 2. If the user pastes a join link (…?room=<id>) from a page or a colleague, call join_room with it instead; everyone in the room sees the same view.
 3. "No page connected" or "sent, unconfirmed" means the tab is closed, still loading, or on another room: re-send the join link rather than retrying. A room-expired error (24 h idle) means call get_juicebox_url again.
 
-First run: after load_map and goto_locus, add the gene track (load_track with no URL loads RefSeq Select) unless told otherwise, and tell the user what to look for: a contact map, the locus in the header, gene annotations under the map. Report only what you have verified; distinguish "installed", "server connected", and "viewer working".
+First run: after load_map and goto_locus, add the gene track (load_track with url "genes" loads RefSeq Select for the map's genome) unless told otherwise, and tell the user what to look for: a contact map, the locus in the header, gene annotations under the map. Report only what you have verified; distinguish "installed", "server connected", and "viewer working".
 
-Finding data: search_map_catalogs (curated ENCODE and 4DN, fast) then get_map_details for the URL; search_encode_hic for live ENCODE Hi-C experiments with their loop/domain/compartment companion files; search_encode for other assays to overlay as tracks. Prefer GRCh38 unless the user names an assembly, and match track assembly to the map.
+Finding data: search_map_catalogs (curated ENCODE and 4DN, fast) lists each map's .hic URL — use those, never guess an accession — and get_map_details gives one map's full metadata; search_encode_hic for live ENCODE Hi-C experiments with their loop/domain/compartment companion files; search_encode for other assays to overlay as tracks. Prefer GRCh38 unless the user names an assembly, and match track assembly to the map.
 
 Loading and navigating: load_map defaults to KR normalization (fall back to VC or SCALE if the file lacks KR). goto_locus accepts gene names, chr:start-end, whole chromosomes, or two loci for off-diagonal views. Colors are #rrggbb hex.
 
