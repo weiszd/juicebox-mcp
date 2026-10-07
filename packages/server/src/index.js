@@ -80,6 +80,7 @@ export default {
     // --- WebSocket upgrade → the room's Durable Object ---
     if (url.pathname === '/ws' && request.headers.get('Upgrade') === 'websocket') {
       if (!env.ALLOWED_ORIGINS.includes(request.headers.get('Origin'))) {
+        logWarn(`[WS] refused Origin: ${request.headers.get('Origin')}`);
         return new Response('Origin not allowed', { status: 403 });
       }
       // No room given: mint one. The Durable Object reads it back from the URL.
@@ -133,7 +134,9 @@ async function handleMcpRequest(request, env) {
     // Create a new MCP server for this request
     const mcpServer = new McpServer({
       name: 'juicebox-server',
-      version: '1.1.0'
+      version: '1.1.0',
+      // The juicebox-web favicon; hosts that render serverInfo icons show it beside the connector.
+      icons: [{ src: 'https://aidenlab.org/favicon.ico', mimeType: 'image/x-icon', sizes: ['16x16'] }]
     });
 
     // Stateless transport — no session ID validation.

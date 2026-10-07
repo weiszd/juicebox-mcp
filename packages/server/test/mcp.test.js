@@ -104,6 +104,7 @@ describe('initialize', () => {
     expect(res.headers.get('mcp-session-id')).toMatch(ROOM_ID);
     const body = await res.json();
     expect(body.result.serverInfo.name).toBe('juicebox-server');
+    expect(body.result.serverInfo.icons[0].src).toBe('https://aidenlab.org/favicon.ico');
   });
 
   it('x-openai-session binds the same room id every time, and a different one per value', async () => {
@@ -343,7 +344,7 @@ describe('join link and join_room', () => {
 
     const link = text(result).match(/https?:\/\/\S+/)[0];
     expect(text(result)).not.toContain('```');
-    expect(text(result)).toContain(`[Open Juicebox](${link})`);
+    expect(new URL(link).searchParams.get('room')).toBe(session);
     const resourceLink = result.content.find((c) => c.type === 'resource_link');
     expect(resourceLink.uri).toBe(link);
   });
