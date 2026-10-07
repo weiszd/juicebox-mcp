@@ -13,6 +13,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js';
 import { registerTools } from './mcp/toolHandlers.js';
+import { INSTRUCTIONS } from './mcp/instructions.js';
 import { tinyURLShortener } from './urlShortener.js';
 import { logInfo, logWarn, logError } from './lib/logger.js';
 
@@ -134,6 +135,11 @@ async function handleMcpRequest(request, env) {
     const mcpServer = new McpServer({
       name: 'juicebox-server',
       version: '1.1.0'
+    }, {
+      // Returned in the initialize result; every MCP client passes it to the
+      // model, so connector-only users (ChatGPT, Codex, Claude connectors)
+      // get the workflow without the plugin skill.
+      instructions: INSTRUCTIONS
     });
 
     // Stateless transport — no session ID validation.
