@@ -4,6 +4,7 @@ import {
   datasetLabel,
   openPanel,
   panelLabel,
+  panelList,
   positionOf,
   removeTrack,
   resolvePanel,
@@ -59,8 +60,7 @@ const appliers = {
     const browser = resolvePanel(hic, panel, 'close_panel');
     const closed = panelLabel(hic, browser);
     closePanel(hic, browser);
-    const remaining = hic.getAllBrowsers().map((b, i) => `${i + 1} (${datasetLabel(b)})`);
-    return `closed ${closed}; remaining: ${remaining.join(' | ')}`;
+    return `closed ${closed}; remaining: ${panelList(hic)}`;
   },
 
   [CommandType.LOAD_SESSION]: async ({ sessionData }, { hic, container }) => {

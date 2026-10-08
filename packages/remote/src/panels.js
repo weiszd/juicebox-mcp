@@ -26,8 +26,7 @@ export function resolvePanels(hic, spec, { track, acceptsAll = true } = {}) {
   if (spec === undefined || spec === null) {
     if (browsers.length === 1) return [currentBrowser(hic)];
     if (browsers.length === 0) throw new Error('No browser');
-    const labels = browsers.map((b, i) => `${i + 1} (${datasetLabel(b)})`);
-    throw new Error(`${browsers.length} panels open; say panel: ${labels.join(' | ')}${acceptsAll ? ' | all' : ''}`);
+    throw new Error(`${browsers.length} panels open; say panel: ${panelList(hic)}${acceptsAll ? ' | all' : ''}`);
   }
   // A string of digits ("2") is a position, not a name.
   if (typeof spec === 'string' && /^\d+$/.test(spec.trim())) spec = Number(spec);
@@ -95,6 +94,9 @@ export const positionOf = (hic, browser) => hic.getAllBrowsers().indexOf(browser
 
 /** "panel 2 (heart, mm10)", or "panel 2 (no map)". */
 export const panelLabel = (hic, browser) => `panel ${positionOf(hic, browser)} (${datasetLabel(browser)})`;
+
+/** The open panels, left to right: "1 (heart, mm10) | 2 (no map)". */
+export const panelList = (hic) => hic.getAllBrowsers().map((b, i) => `${i + 1} (${datasetLabel(b)})`).join(' | ');
 
 /** "heart, mm10", or "no map". */
 export const datasetLabel = ({ dataset }) => (dataset ? `${dataset.name}, ${dataset.genomeId}` : 'no map');
