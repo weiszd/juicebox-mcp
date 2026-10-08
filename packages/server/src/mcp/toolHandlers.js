@@ -63,7 +63,8 @@ const NORMALIZATION_NAMES = {
  * the client contract), the command `type` (a CommandType member), and the progress
  * `text` (a string, or (args, command) => string) that the ack's outcome is reported
  * with. The command is `{type, ...args}` unless the row's `command(args, {log})` builds
- * the fields itself; it throws a Refusal to answer with an error and send nothing.
+ * the fields itself; it throws a Refusal to answer with an error and send nothing. A row's
+ * `failure(error)` turns any other throw, building or sending, into its error text.
  * Adding a command tool is adding a row here (and the CommandType and applier in the remote).
  */
 const COMMAND_TOOLS = [
@@ -115,46 +116,43 @@ const COMMAND_TOOLS = [
     type: CommandType.LOAD_SESSION,
     // Override: the session is parsed (or fetched) here and sent as an object.
     async command({ sessionData, sessionUrl, fileContent }, { log }) {
-      try {
-        let parsedSession;
-        if (fileContent) {
-          parsedSession = JSON.parse(fileContent);
-        } else if (sessionData) {
-          parsedSession = JSON.parse(sessionData);
-        } else if (sessionUrl) {
-          let normalizedUrl = sessionUrl;
-          if (sessionUrl.includes('dropbox.com') && sessionUrl.includes('dl=0')) {
-            normalizedUrl = sessionUrl.replace('dl=0', 'dl=1');
-            log.logInfo(`Normalized Dropbox URL: ${normalizedUrl}`);
-          }
-          log.logInfo(`Fetching session from URL: ${normalizedUrl}`);
-          const response = await fetch(normalizedUrl);
-          if (!response.ok) {
-            throw new Error(`Failed to fetch session from URL: ${response.status} ${response.statusText}`);
-          }
-          const responseText = await response.text();
-          if (responseText.trim().startsWith('<!DOCTYPE') || responseText.trim().startsWith('<html')) {
-            throw new Error('Received HTML instead of JSON. The URL may be a preview link. For Dropbox links, ensure dl=1 parameter is set, or use a direct download link.');
-          }
-          try {
-            parsedSession = JSON.parse(responseText);
-          } catch (parseError) {
-            log.logError(`Failed to parse JSON from URL. Response preview: ${responseText.substring(0, 200)}...`);
-            throw new Error(`Invalid JSON received from URL: ${parseError.message}. The URL may not point to a valid JSON file.`);
-          }
-        } else {
-          throw new Error('No session data provided. Provide sessionData (for pasted JSON), sessionUrl (for remote URLs like Dropbox/AWS), or attach a file.');
+      let parsedSession;
+      if (fileContent) {
+        parsedSession = JSON.parse(fileContent);
+      } else if (sessionData) {
+        parsedSession = JSON.parse(sessionData);
+      } else if (sessionUrl) {
+        let normalizedUrl = sessionUrl;
+        if (sessionUrl.includes('dropbox.com') && sessionUrl.includes('dl=0')) {
+          normalizedUrl = sessionUrl.replace('dl=0', 'dl=1');
+          log.logInfo(`Normalized Dropbox URL: ${normalizedUrl}`);
         }
-
-        if (!parsedSession.browsers && !parsedSession.url) {
-          throw new Error('Invalid session format: must contain "browsers" array or browser config');
+        log.logInfo(`Fetching session from URL: ${normalizedUrl}`);
+        const response = await fetch(normalizedUrl);
+        if (!response.ok) {
+          throw new Error(`Failed to fetch session from URL: ${response.status} ${response.statusText}`);
         }
-        return { sessionData: parsedSession };
-      } catch (error) {
-        log.logError(`Error loading session: ${error.message}`);
-        throw new Refusal(`Error loading session: ${error.message}`);
+        const responseText = await response.text();
+        if (responseText.trim().startsWith('<!DOCTYPE') || responseText.trim().startsWith('<html')) {
+          throw new Error('Received HTML instead of JSON. The URL may be a preview link. For Dropbox links, ensure dl=1 parameter is set, or use a direct download link.');
+        }
+        try {
+          parsedSession = JSON.parse(responseText);
+        } catch (parseError) {
+          log.logError(`Failed to parse JSON from URL. Response preview: ${responseText.substring(0, 200)}...`);
+          throw new Error(`Invalid JSON received from URL: ${parseError.message}. The URL may not point to a valid JSON file.`);
+        }
+      } else {
+        throw new Error('No session data provided. Provide sessionData (for pasted JSON), sessionUrl (for remote URLs like Dropbox/AWS), or attach a file.');
       }
+
+      if (!parsedSession.browsers && !parsedSession.url) {
+        throw new Error('Invalid session format: must contain "browsers" array or browser config');
+      }
+      return { sessionData: parsedSession };
     },
+    // Any failure, the room's included, answers as a session that could not be loaded.
+    failure: (error) => `Error loading session: ${error.message}`,
     text: (args, { sessionData }) => `Session loaded successfully. Restored ${sessionData.browsers ? sessionData.browsers.length : 1} browser(s).`
   },
   {
@@ -450,14 +448,15 @@ export function registerTools(mcpServer, deps) {
   for (const row of COMMAND_TOOLS) {
     const { name, title, description, inputSchema, type, text } = row;
     mcpServer.registerTool(name, { title, description, inputSchema }, async (args) => {
-      let command;
       try {
-        command = { type, ...(row.command ? await row.command(args, { log }) : args) };
+        const command = { type, ...(row.command ? await row.command(args, { log }) : args) };
+        return await runCommand(name, command, typeof text === 'function' ? text(args, command) : text);
       } catch (error) {
         if (error instanceof Refusal) return { content: [{ type: 'text', text: error.message }], isError: true };
-        throw error;
+        if (!row.failure) throw error;
+        log.logError(row.failure(error));
+        return { content: [{ type: 'text', text: row.failure(error) }], isError: true };
       }
-      return runCommand(name, command, typeof text === 'function' ? text(args, command) : text);
     });
   }
 

@@ -273,6 +273,23 @@ describe('command tools: what the page receives (ticket 36)', () => {
   });
 });
 
+describe('load_session', () => {
+  it('a room that cannot be reached answers "Error loading session: …", like a session that cannot be read', async () => {
+    const session = await newSession();
+    const unreachable = { idFromName: (name) => name, get: () => ({ fetch: async () => { throw new Error('room unreachable'); } }) };
+    const request = new Request('https://jbmcp.test/mcp', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream', 'mcp-session-id': session },
+      body: JSON.stringify({ jsonrpc: '2.0', id: ++rpcId, method: 'tools/call',
+        params: { name: 'load_session', arguments: { sessionData: '{"browsers":[]}' } } }),
+    });
+    const { result } = await (await worker.fetch(request, { ...env, WEBSOCKET_ROOM: unreachable }, createExecutionContext())).json();
+
+    expect(result.isError).toBe(true);
+    expect(text(result)).toBe('Error loading session: room unreachable');
+  });
+});
+
 describe('command tools ⇄ CommandType (ticket 37)', () => {
   /** Arguments for a JSON schema: its required properties, each with a value it accepts. */
   function sample(schema) {
