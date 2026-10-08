@@ -158,34 +158,122 @@ describe('tools/list', () => {
   });
 });
 
-describe('commands with ack', () => {
-  it('sends the prototype payload plus a requestId; ok:true answers with the success text', async () => {
+describe('command tools: what the page receives (ticket 36)', () => {
+  const URL_A = 'https://example.org/a.hic';
+  const URL_T = 'https://example.org/t.bw';
+
+  /**
+   * Every command tool, with arguments, the command the room fans out (less its requestId)
+   * and the tool text on a bare ok ack. Rows with a label exercise argument-dependent
+   * payload or wording.
+   */
+  const commandTools = [
+    ['load_map', { url: URL_A }, { type: 'loadMap', url: URL_A }, `Loading map from ${URL_A}`],
+    ['load_map', { url: URL_A, name: 'heart', normalization: 'KR', locus: 'chr8:1-2', panel: 'new' },
+      { type: 'loadMap', url: URL_A, name: 'heart', normalization: 'KR', locus: 'chr8:1-2', panel: 'new' },
+      `Loading map from ${URL_A} (heart) in a new panel`, 'name, new panel'],
+    ['load_map', { url: URL_A, panel: 2 }, { type: 'loadMap', url: URL_A, panel: 2 }, `Loading map from ${URL_A}`, 'replacing panel 2'],
+    ['close_panel', { panel: 2 }, { type: 'closePanel', panel: 2 }, 'Closing panel'],
+    ['load_control_map', { url: URL_A, name: 'ctl', normalization: 'VC', panel: 1 },
+      { type: 'loadControlMap', url: URL_A, name: 'ctl', normalization: 'VC', panel: 1 }, `Loading control map from ${URL_A} (ctl)`],
+    ['load_session', { sessionData: '{"browsers":[{},{}]}' },
+      { type: 'loadSession', sessionData: { browsers: [{}, {}] } }, 'Session loaded successfully. Restored 2 browser(s).'],
+    ['zoom_in', { centerX: 10, centerY: 20, panel: 'all' }, { type: 'zoomIn', centerX: 10, centerY: 20, panel: 'all' }, 'Zooming in'],
+    ['zoom_out', {}, { type: 'zoomOut' }, 'Zooming out'],
+    ['set_map_foreground_color', { color: '#ff8000', threshold: 5 },
+      { type: 'setForegroundColor', color: { r: 255, g: 128, b: 0 }, threshold: 5 }, 'Map foreground color set to #ff8000 with threshold 5'],
+    ['set_map_background_color', { color: '#ffffff' },
+      { type: 'setBackgroundColor', color: { r: 255, g: 255, b: 255 } }, 'Map background color set to #ffffff'],
+    ['set_color_scale', { action: 'set', value: 3 }, { type: 'setColorScale', action: 'set', value: 3 }, 'Color scale threshold set to 3'],
+    ['set_color_scale', { action: 'increase' }, { type: 'setColorScale', action: 'increase' }, 'Color scale threshold increased (doubled)', 'increase'],
+    ['load_track', { url: URL_T, name: 'H3K27ac', color: '#0000ff', panel: 'all' },
+      { type: 'loadTrack', url: URL_T, name: 'H3K27ac', color: { r: 0, g: 0, b: 255 }, panel: 'all' }, `Loading track "H3K27ac" from ${URL_T}`],
+    ['load_track', { url: 'genes' }, { type: 'loadTrack', preset: 'genes', name: 'Refseq Select', color: { r: 0, g: 0, b: 0 } },
+      'Loading track "Refseq Select" from the genes preset for the map\'s genome', 'genes preset'],
+    ['select_normalization', { normalization: 'VC_SQRT' }, { type: 'setNormalization', normalization: 'VC_SQRT' }, 'Normalization set to Coverage-Sqrt (VC_SQRT)'],
+    ['remove_track', { track: 'genes' }, { type: 'removeTrack', track: 'genes' }, 'Removing track: genes'],
+    // set_track_color sends rgb, not the hex it was given, and words a reset differently.
+    ['set_track_color', { track: '2', color: '#00ff00' }, { type: 'setTrackColor', track: '2', color: { r: 0, g: 255, b: 0 } },
+      'Setting track "2" color to #00ff00'],
+    ['set_track_color', { track: 'genes' }, { type: 'setTrackColor', track: 'genes' }, 'Resetting track "genes" color to default', 'reset'],
+    ['set_track_name', { track: '1', name: 'RefSeq' }, { type: 'setTrackName', track: '1', name: 'RefSeq' }, 'Renaming track "1" to "RefSeq"'],
+    ['set_track_data_range', { track: 'genes', min: 0, max: 10 }, { type: 'setTrackDataRange', track: 'genes', min: 0, max: 10 },
+      'Setting track "genes" data range to [0, 10]'],
+    ['set_track_autoscale', { track: 'genes' }, { type: 'setTrackAutoscale', track: 'genes', enabled: true }, 'Enabling autoscale for track "genes"'],
+    ['set_track_log_scale', { track: 'genes', enabled: false }, { type: 'setTrackLogScale', track: 'genes', enabled: false },
+      'Disabling log scale for track "genes"'],
+    ['goto_locus', { locus: 'chr1:1000-2000' }, { type: 'gotoLocus', locus: 'chr1:1000-2000' }, 'Navigating to locus: chr1:1000-2000'],
+    ['goto_locus', { locus: { chr: 'chr1', start: 1000, end: 2000 } }, { type: 'gotoLocus', locus: { chr: 'chr1', start: 1000, end: 2000 } },
+      'Navigating to locus: chr1:1000-2000', 'structured locus'],
+  ];
+
+  /** Call `name` with a page in the room, ack its command as given; {notice, command, result}. */
+  async function callAndAck(name, args, ack = { ok: true }) {
     const session = await newSession();
     const page = await pageIn(session);
+    const call = callTool(session, name, args);
+    const notice = await page.next();
+    const command = await page.next();
+    page.send({ type: MessageType.ACK, requestId: command.requestId, ...ack });
+    return { notice, command, result: await call };
+  }
 
-    const call = callTool(session, 'goto_locus', { locus: 'chr1:1000-2000' });
-    const command = await nextCommand(page);
-    page.send({ type: MessageType.ACK, requestId: command.requestId, ok: true });
-    const result = await call;
-
-    expect(command).toEqual({ type: CommandType.GOTO_LOCUS, locus: 'chr1:1000-2000', requestId: expect.any(String) });
-    expect(result.isError).toBeFalsy();
-    expect(text(result)).toBe('Navigating to locus: chr1:1000-2000');
+  it('covers each command tool at least once', () => {
+    expect(new Set(commandTools.map(([name]) => name)).size).toBe(18);
   });
 
-  it('ok:false answers with an error carrying the page error text', async () => {
-    const session = await newSession();
-    const page = await pageIn(session);
+  it.each(commandTools.map(([name, args, command, text, label]) => [label ? `${name} (${label})` : name, name, args, command, text]))(
+    '%s', async (_, name, args, expected, expectedText) => {
+      const { notice, command, result } = await callAndAck(name, args);
 
-    const call = callTool(session, 'goto_locus', { locus: 'chr1:1000-2000' });
-    const command = await nextCommand(page);
-    page.send({ type: MessageType.ACK, requestId: command.requestId, ok: false, error: 'No map loaded' });
-    const result = await call;
+      expect(notice).toEqual({ type: MessageType.TOOL_CALL, name });
+      expect(command).toEqual({ ...expected, requestId: expect.any(String) });
+      expect(result.isError).toBeFalsy();
+      expect(text(result)).toBe(expectedText);
+    });
 
-    expect(result.isError).toBe(true);
-    expect(text(result)).toContain('No map loaded');
+  describe('ack to tool result (the same for every command tool)', () => {
+    it('ok with a result: the page\'s lines follow the tool text', async () => {
+      const lines = 'panel 1 (heart, mm10): ok\npanel 2 (colon, GRCh38): No map loaded';
+      const { result } = await callAndAck('goto_locus', { locus: 'MYC', panel: 'all' }, { ok: true, result: lines });
+
+      expect(result.isError).toBeFalsy();
+      expect(text(result)).toBe(`Navigating to locus: MYC\n${lines}`);
+    });
+
+    it('not ok: an error carrying the page error text', async () => {
+      const { result } = await callAndAck('goto_locus', { locus: 'chr1' }, { ok: false, error: 'No map loaded' });
+
+      expect(result.isError).toBe(true);
+      expect(text(result)).toBe('Error: No map loaded');
+    });
+
+    it('no ack within 10 s: the tool text, "sent, unconfirmed", not an error', async () => {
+      const session = await newSession();
+      const page = await pageIn(session);
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+
+      const call = callTool(session, 'goto_locus', { locus: 'chr1' });
+      await nextCommand(page); // the command is out and its ack timer is running
+      // Advance from inside the room: its timer callback must run in the room's I/O context.
+      const room = env.WEBSOCKET_ROOM.get(env.WEBSOCKET_ROOM.idFromName(session));
+      await runInDurableObject(room, () => vi.advanceTimersByTimeAsync(10_000));
+      const result = await call;
+
+      expect(result.isError).toBeFalsy();
+      expect(text(result)).toBe('Navigating to locus: chr1 (sent, unconfirmed: no page acknowledged within 10 s)');
+    });
+
+    it('no page in the room: an error naming the join link, not success', async () => {
+      const result = await callTool(await newSession(), 'goto_locus', { locus: 'chr1' });
+
+      expect(result.isError).toBe(true);
+      expect(text(result)).toBe('Error: No page is connected to this room. Use get_juicebox_url to get the join link and open it in a browser.');
+    });
   });
+});
 
+describe('commands to several pages', () => {
   it('fans out to every page in the room; the first ack decides', async () => {
     const session = await newSession();
     const a = await pageIn(session);
@@ -200,29 +288,6 @@ describe('commands with ack', () => {
     expect(toA).toEqual(toB);
     expect(result.isError).toBe(true);
     expect(text(result)).toContain('first');
-  });
-
-  it('no page in the room answers with an error, not success', async () => {
-    const result = await callTool(await newSession(), 'goto_locus', { locus: 'chr1' });
-
-    expect(result.isError).toBe(true);
-    expect(text(result)).toMatch(/no page is connected/i);
-  });
-
-  it('no ack within 10 s answers "sent, unconfirmed"', async () => {
-    const session = await newSession();
-    const page = await pageIn(session);
-    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
-
-    const call = callTool(session, 'goto_locus', { locus: 'chr1' });
-    await nextCommand(page); // the command is out and its ack timer is running
-    // Advance from inside the room: its timer callback must run in the room's I/O context.
-    const room = env.WEBSOCKET_ROOM.get(env.WEBSOCKET_ROOM.idFromName(session));
-    await runInDurableObject(room, () => vi.advanceTimersByTimeAsync(10_000));
-    const result = await call;
-
-    expect(result.isError).toBeFalsy();
-    expect(text(result)).toContain('sent, unconfirmed');
   });
 });
 
@@ -524,14 +589,6 @@ describe('panels (ADR-0007)', () => {
     const { command } = await commandFor('goto_locus', { locus: 'chr1' });
 
     expect('panel' in command).toBe(false);
-  });
-
-  it('the ack\'s per-panel lines follow the tool text', async () => {
-    const lines = 'panel 1 (heart, mm10): ok\npanel 2 (colon, GRCh38): No map loaded';
-    const { result } = await commandFor('goto_locus', { locus: 'MYC', panel: 'all' }, lines);
-
-    expect(result.isError).toBeFalsy();
-    expect(text(result)).toBe(`Navigating to locus: MYC\n${lines}`);
   });
 
   it('load_map {panel: "new"} asks for a new panel and answers with the page\'s "loaded … into panel N of M"', async () => {
