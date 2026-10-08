@@ -586,7 +586,8 @@ export function registerTools(mcpServer, deps) {
     'get_juicebox_url',
     {
       title: 'Get Juicebox URL',
-      description: 'Get the join link that opens Juicebox connected to the room bound to this MCP session. Use this when users ask how to connect, how to open the Juicebox app, or say things like "Hello juicebox", "Open juicebox", "Show me juicebox", "Launch juicebox", etc. If you have a browser tool (Claude\'s built-in browser or Claude in Chrome), open the join link in it right away so Juicebox appears in the side panel next to the conversation: the page connects to this session\'s room and later tool calls redraw it there. Hosts that render MCP Apps also show a card with the link and its QR code. Always present the link to the user as a clickable link too (a plain URL or markdown link, never inside a code block).',
+      // PROTOTYPE (proto/first-launch): built-in browser only, never Claude in Chrome; no link, room or QR repeated in the reply.
+      description: 'Get the join link that opens Juicebox connected to the room bound to this MCP session. Use this when users ask how to connect, how to open the Juicebox app, or say things like "Hello juicebox", "Hello juicebot", "Open juicebox", "Show me juicebox", "Launch juicebox", etc. A card is shown to the user with an Open Juicebox button. If, and only if, you have the built-in browser of the Claude desktop app (the browser panel beside the conversation), open the join link in it right away: the page connects to this session\'s room and later tool calls redraw it there. Never use Claude in Chrome or any other browser tool for this; if the built-in browser is not available, do not try anything else. Do not repeat the link, the room id or a QR code in your reply.',
       inputSchema: {},
       _meta: TOOL_META
     },
@@ -599,13 +600,13 @@ export function registerTools(mcpServer, deps) {
       joinLink.searchParams.set('room', room);
       const connectionUrl = joinLink.toString();
 
-      // A bare URL and a markdown link: chat clients render both as clickable; a
-      // code block would not be. The resource_link is the same link for clients that
+      // A bare URL: chat clients render it as clickable; a code block would not
+      // be. The resource_link is the same link for clients that
       // render link content blocks (Cowork opens it in its browser pane).
       const content = [
         {
           type: 'text',
-          text: `Juicebox join link for room ${room}:\n${connectionUrl}\n\n[Open Juicebox](${connectionUrl})\n\nNext step: if you have a browser tool, open this link in the built-in browser now so the viewer shows in the side panel; it joins room ${room} and later Juicebox tool calls redraw it there. Otherwise show the link for the user to click.`
+          text: `Juicebox join link for room ${room}:\n${connectionUrl}\n\nThe user already sees a card for this. Next step: if you have the Claude desktop app's built-in browser, open this link in it now so the viewer shows in the panel beside the conversation. Never use Claude in Chrome or another browser tool, and if the built-in browser is unavailable do not attempt to open the link at all. Then reply in one short sentence (Juicebox is opening in the panel, or: press Open Juicebox) and ask what to load. Do not repeat the link, room id or QR.`
         },
         {
           type: 'resource_link',
