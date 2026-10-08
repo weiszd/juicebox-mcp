@@ -16,14 +16,9 @@ import { hicExperiments, formatHicExperiments, encodeSearch, formatEncodeSearch,
 import { VIEW_URI, VIEW_HTML, VIEW_META, VIEW_MIME_TYPE, TOOL_META } from './juiceboxView.js';
 import { CommandType } from '@aidenlab/juicebox-remote/protocol';
 
-// Helper function to convert hex color to RGB
+// "#rrggbb" to {r, g, b}; colorSchema admits nothing else, so there is no failure case.
 function hexToRgb(hex) {
-  const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
-  return result ? {
-    r: parseInt(result[1], 16),
-    g: parseInt(result[2], 16),
-    b: parseInt(result[3], 16)
-  } : null;
+  return { r: parseInt(hex.slice(1, 3), 16), g: parseInt(hex.slice(3, 5), 16), b: parseInt(hex.slice(5, 7), 16) };
 }
 
 // Room ids: 10 Crockford base32 characters (design §5.4)
@@ -36,6 +31,7 @@ const panelSchema = z.union([z.number().int().positive(), z.string()]).optional(
   .describe('panel: position from the left (1, 2, ...), a map name, or "all"; required when more than one panel is open');
 const onePanelSchema = z.union([z.number().int().positive(), z.string()]).optional()
   .describe('panel: position from the left (1, 2, ...) or a map name, no "all"; required when more than one panel is open');
+const trackSchema = z.string().describe('Track name or 1-based index number');
 
 /** Thrown by a catalogue row's `command` to answer the tool call with `message` as an error, sending nothing. */
 class Refusal extends Error {}
@@ -57,14 +53,64 @@ const NORMALIZATION_NAMES = {
   GW_SCALE: 'GW_SCALE'
 };
 
+/** load_session: the session from pasted JSON, an attached file or a URL, sent as an object. */
+async function sessionFromArgs({ sessionData, sessionUrl, fileContent }, { log }) {
+  let parsedSession;
+  if (fileContent) {
+    parsedSession = JSON.parse(fileContent);
+  } else if (sessionData) {
+    parsedSession = JSON.parse(sessionData);
+  } else if (sessionUrl) {
+    let normalizedUrl = sessionUrl;
+    if (sessionUrl.includes('dropbox.com') && sessionUrl.includes('dl=0')) {
+      normalizedUrl = sessionUrl.replace('dl=0', 'dl=1');
+      log.logInfo(`Normalized Dropbox URL: ${normalizedUrl}`);
+    }
+    log.logInfo(`Fetching session from URL: ${normalizedUrl}`);
+    const response = await fetch(normalizedUrl);
+    if (!response.ok) {
+      throw new Error(`Failed to fetch session from URL: ${response.status} ${response.statusText}`);
+    }
+    const responseText = await response.text();
+    if (responseText.trim().startsWith('<!DOCTYPE') || responseText.trim().startsWith('<html')) {
+      throw new Error('Received HTML instead of JSON. The URL may be a preview link. For Dropbox links, ensure dl=1 parameter is set, or use a direct download link.');
+    }
+    try {
+      parsedSession = JSON.parse(responseText);
+    } catch (parseError) {
+      log.logError(`Failed to parse JSON from URL. Response preview: ${responseText.substring(0, 200)}...`);
+      throw new Error(`Invalid JSON received from URL: ${parseError.message}. The URL may not point to a valid JSON file.`);
+    }
+  } else {
+    throw new Error('No session data provided. Provide sessionData (for pasted JSON), sessionUrl (for remote URLs like Dropbox/AWS), or attach a file.');
+  }
+
+  if (!parsedSession.browsers && !parsedSession.url) {
+    throw new Error('Invalid session format: must contain "browsers" array or browser config');
+  }
+  return { sessionData: parsedSession };
+}
+
+/** load_track: a preset keyword travels as `preset` with its default name and colour (`color` arrives as rgb). */
+function trackFromUrl({ url, name, color, panel }) {
+  const presetKey = url.toLowerCase();
+  const preset = TRACK_PRESETS[presetKey];
+  const resolvedColor = color || preset?.color;
+  const command = preset ? { preset: presetKey, name: name || preset.name } : { url, name };
+  if (resolvedColor) command.color = resolvedColor;
+  if (panel !== undefined) command.panel = panel;
+  return command;
+}
+
 /**
  * The command tools: each row is one MCP tool that sends one command to every page in
  * the room (design §5.2). A row names the tool (name, title, description, inputSchema:
  * the client contract), the command `type` (a CommandType member), and the progress
  * `text` (a string, or (args, command) => string) that the ack's outcome is reported
- * with. The command is `{type, ...args}` unless the row's `command(args, {log})` builds
- * the fields itself; it throws a Refusal to answer with an error and send nothing. A row's
- * `failure(error)` turns any other throw, building or sending, into its error text.
+ * with. The command is `{type, ...args}`, the args named in `rgb` converted from hex,
+ * unless the row's `command(args, {log})` builds the fields from those args itself; it
+ * throws a Refusal to answer with an error and send nothing. A row's `failure(error)`
+ * turns any other throw, building or sending, into its error text.
  * Adding a command tool is adding a row here (and the CommandType and applier in the remote).
  */
 const COMMAND_TOOLS = [
@@ -114,43 +160,7 @@ const COMMAND_TOOLS = [
       fileContent: z.string().optional().describe('Content of attached session file (use when user attaches a .json file to the chat)')
     },
     type: CommandType.LOAD_SESSION,
-    // Override: the session is parsed (or fetched) here and sent as an object.
-    async command({ sessionData, sessionUrl, fileContent }, { log }) {
-      let parsedSession;
-      if (fileContent) {
-        parsedSession = JSON.parse(fileContent);
-      } else if (sessionData) {
-        parsedSession = JSON.parse(sessionData);
-      } else if (sessionUrl) {
-        let normalizedUrl = sessionUrl;
-        if (sessionUrl.includes('dropbox.com') && sessionUrl.includes('dl=0')) {
-          normalizedUrl = sessionUrl.replace('dl=0', 'dl=1');
-          log.logInfo(`Normalized Dropbox URL: ${normalizedUrl}`);
-        }
-        log.logInfo(`Fetching session from URL: ${normalizedUrl}`);
-        const response = await fetch(normalizedUrl);
-        if (!response.ok) {
-          throw new Error(`Failed to fetch session from URL: ${response.status} ${response.statusText}`);
-        }
-        const responseText = await response.text();
-        if (responseText.trim().startsWith('<!DOCTYPE') || responseText.trim().startsWith('<html')) {
-          throw new Error('Received HTML instead of JSON. The URL may be a preview link. For Dropbox links, ensure dl=1 parameter is set, or use a direct download link.');
-        }
-        try {
-          parsedSession = JSON.parse(responseText);
-        } catch (parseError) {
-          log.logError(`Failed to parse JSON from URL. Response preview: ${responseText.substring(0, 200)}...`);
-          throw new Error(`Invalid JSON received from URL: ${parseError.message}. The URL may not point to a valid JSON file.`);
-        }
-      } else {
-        throw new Error('No session data provided. Provide sessionData (for pasted JSON), sessionUrl (for remote URLs like Dropbox/AWS), or attach a file.');
-      }
-
-      if (!parsedSession.browsers && !parsedSession.url) {
-        throw new Error('Invalid session format: must contain "browsers" array or browser config');
-      }
-      return { sessionData: parsedSession };
-    },
+    command: sessionFromArgs,
     // Any failure, the room's included, answers as a session that could not be loaded.
     failure: (error) => `Error loading session: ${error.message}`,
     text: (args, { sessionData }) => `Session loaded successfully. Restored ${sessionData.browsers ? sessionData.browsers.length : 1} browser(s).`
@@ -189,8 +199,7 @@ const COMMAND_TOOLS = [
       panel: panelSchema
     },
     type: CommandType.SET_FOREGROUND_COLOR,
-    // Override: the page takes rgb, not hex.
-    command: ({ color, threshold, panel }) => ({ color: hexToRgb(color), threshold, panel }),
+    rgb: ['color'],
     text: ({ color, threshold }) => `Map foreground color set to ${color}${threshold ? ` with threshold ${threshold}` : ''}`
   },
   {
@@ -199,8 +208,7 @@ const COMMAND_TOOLS = [
     description: 'Set the background color of the contact map',
     inputSchema: { color: colorSchema, panel: panelSchema },
     type: CommandType.SET_BACKGROUND_COLOR,
-    // Override: the page takes rgb, not hex.
-    command: ({ color, panel }) => ({ color: hexToRgb(color), panel }),
+    rgb: ['color'],
     text: ({ color }) => `Map background color set to ${color}`
   },
   {
@@ -230,19 +238,11 @@ const COMMAND_TOOLS = [
       url: z.string().describe('URL to the track file (e.g., bigWig, bigBed, bed, bedpe), or the keyword "genes" for the built-in gene track'),
       name: z.string().optional().describe('Optional display name for the track'),
       color: colorSchema.optional().describe('Optional track color as hex code (e.g., "#ff0000")'),
-      panel: z.union([z.number().int().positive(), z.string()]).optional().describe('panel: position from the left (1, 2, ...), a map name, or "all"; required when more than one panel is open')
+      panel: panelSchema
     },
     type: CommandType.LOAD_TRACK,
-    // Override: a preset keyword travels as `preset` with its default name and colour; colours go as rgb.
-    command({ url, name, color, panel }) {
-      const presetKey = url.toLowerCase();
-      const preset = TRACK_PRESETS[presetKey];
-      const resolvedColor = color ? hexToRgb(color) : preset?.color;
-      const command = preset ? { preset: presetKey, name: name || preset.name } : { url, name };
-      if (resolvedColor) command.color = resolvedColor;
-      if (panel !== undefined) command.panel = panel;
-      return command;
-    },
+    rgb: ['color'],
+    command: trackFromUrl,
     text: (args, { url, preset, name }) => `Loading track${name ? ` "${name}"` : ''} from ${preset ? `the ${preset} preset for the map's genome` : url}`
   },
   {
@@ -262,7 +262,7 @@ const COMMAND_TOOLS = [
     title: 'Remove Track',
     description: 'Remove a loaded track from Juicebox by name or index number (use list_tracks to see available tracks).',
     inputSchema: {
-      track: z.string().describe('Track name or 1-based index number'),
+      track: trackSchema,
       panel: panelSchema
     },
     type: CommandType.REMOVE_TRACK,
@@ -273,13 +273,13 @@ const COMMAND_TOOLS = [
     title: 'Set Track Color',
     description: 'Set or reset the color of a loaded track. Omit color to reset to default.',
     inputSchema: {
-      track: z.string().describe('Track name or 1-based index number'),
+      track: trackSchema,
       color: colorSchema.optional().describe('Hex color (e.g., "#ff0000"). Omit to reset to default.'),
       panel: panelSchema
     },
     type: CommandType.SET_TRACK_COLOR,
-    // Override: the page takes rgb, not hex; no color resets the track's colour, and the text says so.
-    command: ({ track, color, panel }) => (color ? { track, panel, color: hexToRgb(color) } : { track, panel }),
+    rgb: ['color'],
+    // No color resets the track's colour, and the text says so.
     text: ({ track, color }) => (color ? `Setting track "${track}" color to ${color}` : `Resetting track "${track}" color to default`)
   },
   {
@@ -299,7 +299,7 @@ const COMMAND_TOOLS = [
     title: 'Set Track Data Range',
     description: 'Set the min/max data range for a 1D track. This disables autoscale.',
     inputSchema: {
-      track: z.string().describe('Track name or 1-based index number'),
+      track: trackSchema,
       min: z.number().describe('Minimum value'),
       max: z.number().describe('Maximum value'),
       panel: panelSchema
@@ -312,7 +312,7 @@ const COMMAND_TOOLS = [
     title: 'Set Track Autoscale',
     description: 'Enable or disable autoscale for a 1D track.',
     inputSchema: {
-      track: z.string().describe('Track name or 1-based index number'),
+      track: trackSchema,
       enabled: z.boolean().default(true).describe('Enable (true) or disable (false) autoscale'),
       panel: panelSchema
     },
@@ -324,7 +324,7 @@ const COMMAND_TOOLS = [
     title: 'Set Track Log Scale',
     description: 'Enable or disable log scale for a 1D track.',
     inputSchema: {
-      track: z.string().describe('Track name or 1-based index number'),
+      track: trackSchema,
       enabled: z.boolean().default(true).describe('Enable (true) or disable (false) log scale'),
       panel: panelSchema
     },
@@ -449,7 +449,9 @@ export function registerTools(mcpServer, deps) {
     const { name, title, description, inputSchema, type, text } = row;
     mcpServer.registerTool(name, { title, description, inputSchema }, async (args) => {
       try {
-        const command = { type, ...(row.command ? await row.command(args, { log }) : args) };
+        const sent = row.rgb ? Object.fromEntries(Object.entries(args).map(([key, value]) =>
+          [key, row.rgb.includes(key) && value !== undefined ? hexToRgb(value) : value])) : args;
+        const command = { type, ...(row.command ? await row.command(sent, { log }) : sent) };
         return await runCommand(name, command, typeof text === 'function' ? text(args, command) : text);
       } catch (error) {
         if (error instanceof Refusal) return { content: [{ type: 'text', text: error.message }], isError: true };
