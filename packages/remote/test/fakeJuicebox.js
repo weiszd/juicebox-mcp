@@ -5,47 +5,24 @@ import { deflateRawSync } from 'node:zlib';
  * One fake juicebox.js for every remote spec: the `hic` namespace attachRemote is
  * given, and the platform WebSocket it is given a factory for. The surface is what
  * the remote touches (src/applyCommand.js, src/observe.js, src/panels.js, src/attachRemote.js);
- * a new viewer method goes here, once.
+ * a new viewer method goes here, once. Every method is a spy.
  *
- * hic (fakeHic):
- *   EventBus.globalBus  subscribe, unsubscribe; posts BrowserSelect, BrowserAdd,
- *                       BrowserDelete, TrackXYPairLoad / Removal / Change,
- *                       Track2DLoad / Removal / Change
- *   getCurrentBrowser, getAllBrowsers, setCurrentBrowser (posts BrowserSelect)
- *   createBrowser(container, config)  adds an empty panel on the right, posts BrowserAdd
- *   deleteBrowser(browser)            posts BrowserDelete, takes it out (absent with
- *                                     `deleteBrowser: false`, as in juicebox.js 4.7.0)
- *   restoreSession(container, session), toJSON(), compressedSession()  a round trip:
- *                       toJSON lists each panel with a map url as {url, name} (plus
- *                       displayMode and threshold with `autoThreshold`), and
- *                       `selectedGene` when given; compressedSession is
- *                       `session=blob:` + url-safe base64 of the raw-deflated toJSON;
- *                       restoreSession replaces the panels (an entry `{}` an empty one),
- *                       selects the first, posts no BrowserAdd, and each restored map
- *                       announces onMapLoaded and onLocusChange.
- * browser (one per panel):
- *   config, registry.delete (disposes it; the first remaining becomes current),
- *   dataset {url, name, genomeId, isWholeGenome}, controlDataset, state {chr1, getLocus},
- *   coordinator.addCallback (onLocusChange, onColorScaleChange, onNormalizationChange,
- *     onDisplayModeChange, onMapLoaded, onControlMapLoaded, …),
- *   getSyncState, syncState, parseGotoInput, zoomAndCenter, loadHicFile,
- *   loadHicControlFile, setNormalization, getDisplayMode, setDisplayMode,
- *   colorScale / getColorScale (getThreshold, getColorComponents, setColorComponents),
- *   setColorScaleThreshold, contactMatrixView (setColorScale, setBackgroundColor,
- *   viewportElement, getViewDimensions), trackPairs, tracks2D, loadTracks,
+ * hic (fakeHic): EventBus.globalBus {subscribe, unsubscribe}, getCurrentBrowser,
+ *   getAllBrowsers, setCurrentBrowser, createBrowser, deleteBrowser (absent with
+ *   `deleteBrowser: false`), restoreSession, toJSON, compressedSession.
+ * browser: config, registry.delete, dataset, controlDataset, state {chr1, getLocus},
+ *   coordinator.addCallback, getSyncState, syncState, parseGotoInput, zoomAndCenter,
+ *   loadHicFile, loadHicControlFile, setNormalization, getDisplayMode, setDisplayMode,
+ *   colorScale / getColorScale {getThreshold, getColorComponents, setColorComponents},
+ *   setColorScaleThreshold, contactMatrixView {setColorScale, setBackgroundColor,
+ *   viewportElement, getViewDimensions}, trackPairs, tracks2D, loadTracks,
  *   layoutController.removeTrackXYPair, removeTrack2D, setTrack2DColor, setTrack2DName.
- *   Every method is a spy, and announces its change the way juicebox.js's does
- *   (async ones after an await), so a missing guard shows up as a sync event.
- * track pair (fakeTrackPair): browser, track {name (setter relabels), config, …look},
- *   setColor, setTrackLabelName, setDataRange, setAutoscale, setLogScale; each posts
- *   TrackXYPairChange once the pair belongs to a browser.
- * 2D track (fakeTrack2D): {name, color, config}.
+ * track pair (fakeTrackPair): browser, track {name, config}, setColor, setTrackLabelName,
+ *   setDataRange, setAutoscale, setLogScale.
+ * 2D track (fakeTrack2D): name, color, config.
  *
- * Test helpers on hic, not juicebox.js: `bus` (the global bus, with `post` and `count`),
- * `browsers` and `current` (the panels, left to right, and the selected one), `session`
- * (toJSON(); assigning one swaps the panels silently, as a change by hand),
- * `newBrowser`, `clone` (juicebox-web's clone button), `addTrack`, `addTrack2D`.
- * On a coordinator: `fire(name, payload)` and `count()`.
+ * Test helpers, not juicebox.js: on hic `bus` {post, count}, `browsers`, `current`,
+ * `session`, `newBrowser`, `clone`, `addTrack`, `addTrack2D`; on a coordinator `fire`, `count`.
  */
 
 export const tick = () => Promise.resolve();
