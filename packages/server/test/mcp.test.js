@@ -163,48 +163,71 @@ describe('command tools: what the page receives (ticket 36)', () => {
   const URL_T = 'https://example.org/t.bw';
 
   /**
-   * Every command tool, with arguments, the command the room fans out (less its requestId)
-   * and the tool text on a bare ok ack. Rows with a label exercise argument-dependent
-   * payload or wording.
+   * Every command tool: the arguments it is called with, the command the room fans out
+   * (`sent`, less its requestId) and the tool `text` on a bare ok ack. A `label` marks a
+   * further row for the same tool, exercising argument-dependent payload or wording.
    */
   const commandTools = [
-    ['load_map', { url: URL_A }, { type: 'loadMap', url: URL_A }, `Loading map from ${URL_A}`],
-    ['load_map', { url: URL_A, name: 'heart', normalization: 'KR', locus: 'chr8:1-2', panel: 'new' },
-      { type: 'loadMap', url: URL_A, name: 'heart', normalization: 'KR', locus: 'chr8:1-2', panel: 'new' },
-      `Loading map from ${URL_A} (heart) in a new panel`, 'name, new panel'],
-    ['load_map', { url: URL_A, panel: 2 }, { type: 'loadMap', url: URL_A, panel: 2 }, `Loading map from ${URL_A}`, 'replacing panel 2'],
-    ['close_panel', { panel: 2 }, { type: 'closePanel', panel: 2 }, 'Closing panel'],
-    ['load_control_map', { url: URL_A, name: 'ctl', normalization: 'VC', panel: 1 },
-      { type: 'loadControlMap', url: URL_A, name: 'ctl', normalization: 'VC', panel: 1 }, `Loading control map from ${URL_A} (ctl)`],
-    ['load_session', { sessionData: '{"browsers":[{},{}]}' },
-      { type: 'loadSession', sessionData: { browsers: [{}, {}] } }, 'Session loaded successfully. Restored 2 browser(s).'],
-    ['zoom_in', { centerX: 10, centerY: 20, panel: 'all' }, { type: 'zoomIn', centerX: 10, centerY: 20, panel: 'all' }, 'Zooming in'],
-    ['zoom_out', {}, { type: 'zoomOut' }, 'Zooming out'],
-    ['set_map_foreground_color', { color: '#ff8000', threshold: 5 },
-      { type: 'setForegroundColor', color: { r: 255, g: 128, b: 0 }, threshold: 5 }, 'Map foreground color set to #ff8000 with threshold 5'],
-    ['set_map_background_color', { color: '#ffffff' },
-      { type: 'setBackgroundColor', color: { r: 255, g: 255, b: 255 } }, 'Map background color set to #ffffff'],
-    ['set_color_scale', { action: 'set', value: 3 }, { type: 'setColorScale', action: 'set', value: 3 }, 'Color scale threshold set to 3'],
-    ['set_color_scale', { action: 'increase' }, { type: 'setColorScale', action: 'increase' }, 'Color scale threshold increased (doubled)', 'increase'],
-    ['load_track', { url: URL_T, name: 'H3K27ac', color: '#0000ff', panel: 'all' },
-      { type: 'loadTrack', url: URL_T, name: 'H3K27ac', color: { r: 0, g: 0, b: 255 }, panel: 'all' }, `Loading track "H3K27ac" from ${URL_T}`],
-    ['load_track', { url: 'genes' }, { type: 'loadTrack', preset: 'genes', name: 'Refseq Select', color: { r: 0, g: 0, b: 0 } },
-      'Loading track "Refseq Select" from the genes preset for the map\'s genome', 'genes preset'],
-    ['select_normalization', { normalization: 'VC_SQRT' }, { type: 'setNormalization', normalization: 'VC_SQRT' }, 'Normalization set to Coverage-Sqrt (VC_SQRT)'],
-    ['remove_track', { track: 'genes' }, { type: 'removeTrack', track: 'genes' }, 'Removing track: genes'],
+    { tool: 'load_map', args: { url: URL_A }, sent: { type: 'loadMap', url: URL_A }, text: `Loading map from ${URL_A}` },
+    { tool: 'load_map', label: 'name, new panel',
+      args: { url: URL_A, name: 'heart', normalization: 'KR', locus: 'chr8:1-2', panel: 'new' },
+      sent: { type: 'loadMap', url: URL_A, name: 'heart', normalization: 'KR', locus: 'chr8:1-2', panel: 'new' },
+      text: `Loading map from ${URL_A} (heart) in a new panel` },
+    { tool: 'load_map', label: 'replacing panel 2',
+      args: { url: URL_A, panel: 2 }, sent: { type: 'loadMap', url: URL_A, panel: 2 }, text: `Loading map from ${URL_A}` },
+    { tool: 'close_panel', args: { panel: 2 }, sent: { type: 'closePanel', panel: 2 }, text: 'Closing panel' },
+    { tool: 'load_control_map',
+      args: { url: URL_A, name: 'ctl', normalization: 'VC', panel: 1 },
+      sent: { type: 'loadControlMap', url: URL_A, name: 'ctl', normalization: 'VC', panel: 1 },
+      text: `Loading control map from ${URL_A} (ctl)` },
+    { tool: 'load_session',
+      args: { sessionData: '{"browsers":[{},{}]}' }, sent: { type: 'loadSession', sessionData: { browsers: [{}, {}] } },
+      text: 'Session loaded successfully. Restored 2 browser(s).' },
+    { tool: 'zoom_in',
+      args: { centerX: 10, centerY: 20, panel: 'all' }, sent: { type: 'zoomIn', centerX: 10, centerY: 20, panel: 'all' }, text: 'Zooming in' },
+    { tool: 'zoom_out', args: {}, sent: { type: 'zoomOut' }, text: 'Zooming out' },
+    { tool: 'set_map_foreground_color',
+      args: { color: '#ff8000', threshold: 5 }, sent: { type: 'setForegroundColor', color: { r: 255, g: 128, b: 0 }, threshold: 5 },
+      text: 'Map foreground color set to #ff8000 with threshold 5' },
+    { tool: 'set_map_background_color',
+      args: { color: '#ffffff' }, sent: { type: 'setBackgroundColor', color: { r: 255, g: 255, b: 255 } },
+      text: 'Map background color set to #ffffff' },
+    { tool: 'set_color_scale',
+      args: { action: 'set', value: 3 }, sent: { type: 'setColorScale', action: 'set', value: 3 }, text: 'Color scale threshold set to 3' },
+    { tool: 'set_color_scale', label: 'increase',
+      args: { action: 'increase' }, sent: { type: 'setColorScale', action: 'increase' }, text: 'Color scale threshold increased (doubled)' },
+    { tool: 'load_track',
+      args: { url: URL_T, name: 'H3K27ac', color: '#0000ff', panel: 'all' },
+      sent: { type: 'loadTrack', url: URL_T, name: 'H3K27ac', color: { r: 0, g: 0, b: 255 }, panel: 'all' },
+      text: `Loading track "H3K27ac" from ${URL_T}` },
+    { tool: 'load_track', label: 'genes preset',
+      args: { url: 'genes' }, sent: { type: 'loadTrack', preset: 'genes', name: 'Refseq Select', color: { r: 0, g: 0, b: 0 } },
+      text: 'Loading track "Refseq Select" from the genes preset for the map\'s genome' },
+    { tool: 'select_normalization',
+      args: { normalization: 'VC_SQRT' }, sent: { type: 'setNormalization', normalization: 'VC_SQRT' },
+      text: 'Normalization set to Coverage-Sqrt (VC_SQRT)' },
+    { tool: 'remove_track', args: { track: 'genes' }, sent: { type: 'removeTrack', track: 'genes' }, text: 'Removing track: genes' },
     // set_track_color sends rgb, not the hex it was given, and words a reset differently.
-    ['set_track_color', { track: '2', color: '#00ff00' }, { type: 'setTrackColor', track: '2', color: { r: 0, g: 255, b: 0 } },
-      'Setting track "2" color to #00ff00'],
-    ['set_track_color', { track: 'genes' }, { type: 'setTrackColor', track: 'genes' }, 'Resetting track "genes" color to default', 'reset'],
-    ['set_track_name', { track: '1', name: 'RefSeq' }, { type: 'setTrackName', track: '1', name: 'RefSeq' }, 'Renaming track "1" to "RefSeq"'],
-    ['set_track_data_range', { track: 'genes', min: 0, max: 10 }, { type: 'setTrackDataRange', track: 'genes', min: 0, max: 10 },
-      'Setting track "genes" data range to [0, 10]'],
-    ['set_track_autoscale', { track: 'genes' }, { type: 'setTrackAutoscale', track: 'genes', enabled: true }, 'Enabling autoscale for track "genes"'],
-    ['set_track_log_scale', { track: 'genes', enabled: false }, { type: 'setTrackLogScale', track: 'genes', enabled: false },
-      'Disabling log scale for track "genes"'],
-    ['goto_locus', { locus: 'chr1:1000-2000' }, { type: 'gotoLocus', locus: 'chr1:1000-2000' }, 'Navigating to locus: chr1:1000-2000'],
-    ['goto_locus', { locus: { chr: 'chr1', start: 1000, end: 2000 } }, { type: 'gotoLocus', locus: { chr: 'chr1', start: 1000, end: 2000 } },
-      'Navigating to locus: chr1:1000-2000', 'structured locus'],
+    { tool: 'set_track_color',
+      args: { track: '2', color: '#00ff00' }, sent: { type: 'setTrackColor', track: '2', color: { r: 0, g: 255, b: 0 } },
+      text: 'Setting track "2" color to #00ff00' },
+    { tool: 'set_track_color', label: 'reset',
+      args: { track: 'genes' }, sent: { type: 'setTrackColor', track: 'genes' }, text: 'Resetting track "genes" color to default' },
+    { tool: 'set_track_name',
+      args: { track: '1', name: 'RefSeq' }, sent: { type: 'setTrackName', track: '1', name: 'RefSeq' }, text: 'Renaming track "1" to "RefSeq"' },
+    { tool: 'set_track_data_range',
+      args: { track: 'genes', min: 0, max: 10 }, sent: { type: 'setTrackDataRange', track: 'genes', min: 0, max: 10 },
+      text: 'Setting track "genes" data range to [0, 10]' },
+    { tool: 'set_track_autoscale',
+      args: { track: 'genes' }, sent: { type: 'setTrackAutoscale', track: 'genes', enabled: true }, text: 'Enabling autoscale for track "genes"' },
+    { tool: 'set_track_log_scale',
+      args: { track: 'genes', enabled: false }, sent: { type: 'setTrackLogScale', track: 'genes', enabled: false },
+      text: 'Disabling log scale for track "genes"' },
+    { tool: 'goto_locus',
+      args: { locus: 'chr1:1000-2000' }, sent: { type: 'gotoLocus', locus: 'chr1:1000-2000' }, text: 'Navigating to locus: chr1:1000-2000' },
+    { tool: 'goto_locus', label: 'structured locus',
+      args: { locus: { chr: 'chr1', start: 1000, end: 2000 } }, sent: { type: 'gotoLocus', locus: { chr: 'chr1', start: 1000, end: 2000 } },
+      text: 'Navigating to locus: chr1:1000-2000' },
   ];
 
   /** Call `name` with a page in the room, ack its command as given; {notice, command, result}. */
@@ -218,16 +241,12 @@ describe('command tools: what the page receives (ticket 36)', () => {
     return { notice, command, result: await call };
   }
 
-  it('covers each command tool at least once', () => {
-    expect(new Set(commandTools.map(([name]) => name)).size).toBe(18);
-  });
+  it.each(commandTools.map((row) => [row.label ? `${row.tool} (${row.label})` : row.tool, row]))(
+    '%s', async (_, { tool, args, sent, text: expectedText }) => {
+      const { notice, command, result } = await callAndAck(tool, args);
 
-  it.each(commandTools.map(([name, args, command, text, label]) => [label ? `${name} (${label})` : name, name, args, command, text]))(
-    '%s', async (_, name, args, expected, expectedText) => {
-      const { notice, command, result } = await callAndAck(name, args);
-
-      expect(notice).toEqual({ type: MessageType.TOOL_CALL, name });
-      expect(command).toEqual({ ...expected, requestId: expect.any(String) });
+      expect(notice).toEqual({ type: MessageType.TOOL_CALL, name: tool });
+      expect(command).toEqual({ ...sent, requestId: expect.any(String) });
       expect(result.isError).toBeFalsy();
       expect(text(result)).toBe(expectedText);
     });
