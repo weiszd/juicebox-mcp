@@ -126,7 +126,9 @@ only one panel shows, or `"all"` (every panel, where the table says so). Omitted
 it is the current browser when one panel is open and an error listing the panels
 when several are. An ack's `result` names the panel(s) acted on, one line each,
 e.g. `panel 2 (heart, mm10): ok`; with `"all"` the command fails only when every
-panel fails.
+panel fails. The remote resolves the spec, opens and closes panels, and finds and
+changes tracks in one module, `panels.js`, which the sync-event path (§5.3) uses
+too; the command applier keeps only tool semantics and result lines.
 
 | Command | `panel` | Applied as |
 |---|---|---|
@@ -168,7 +170,11 @@ resulting callbacks are not re‑emitted. Same rule as the prototype.
 
 Every sync event carries `panel`, the sender's 1-based left-to-right position
 (what `list_panels` prints), and is applied to the receiver's panel at that
-position; a position the receiver lacks is dropped. Panels are opened and
+position; a position the receiver lacks is dropped. The position is looked up,
+`panelOpen` / `panelClose` applied, and a track event's track found (by name,
+case-insensitively, with the same 2D-track guard) by the shared `panels.js` that
+resolves commands' `panel` (§5.2); the wire stays position-only, with no names or
+`"all"`. Panels are opened and
 closed on peers only by `panelOpen` / `panelClose`, so positions stay aligned,
 empty panels included; a `mapLoad` never opens one. An event without `panel`
 applies to the current panel. The remote follows every panel in

@@ -65,10 +65,11 @@ Publishable to npm as plain ESM, no build step; exports `.` (`src/attachRemote.j
 - `src/protocol.js` — message catalogue and validators (§5.4).
 - `src/applyCommand.js` — one command → calls on juicebox.js's public surface (§5.2).
 - `src/observe.js` — viewer changes → sync events, and applying peers' sync events without echoing them (§5.3).
+- `src/panels.js` — the panel rules of ADR-0007/0008 in one place, called by both of the above: resolve a panel spec (position, unique map name, `"all"`, omitted) or a sync event's position to browsers, open (`"new"`, or a peer's `panelOpen` at exactly one past the last) and close (never the last) a panel, find a track by number or case-insensitive name, and the track operations (remove, colour, name, data range, autoscale, log scale) with the 2D-track guard. Map-level operations stay in `applyCommand.js`.
 - `src/sessionToRestore.js` — decodes and validates the room's saved session.
 - `src/WebSocketClient.js` — the prototype's reconnecting client, with an injected socket factory.
 
-The package never imports juicebox.js: the host passes its namespace as `hic`, and `juicebox.js >=4.10.0-mcp.1 <5` is a peer dependency (the fork build, published from weiszd/juicebox.js to the `mcp` dist-tag; a plain range would never pick a pre-release). Tests drive `attachRemote` with a fake `hic` and a fake socket. Publishing: a GitHub release tagged `remote-v<version>` runs `.github/workflows/publish-remote.yml` (npm trusted publishing).
+The package never imports juicebox.js: the host passes its namespace as `hic`, and `juicebox.js >=4.10.0-mcp.1 <5` is a peer dependency (the fork build, published from weiszd/juicebox.js to the `mcp` dist-tag; a plain range would never pick a pre-release). Tests drive `attachRemote` with the shared fake `hic` and fake socket (`test/fakeJuicebox.js`); `src/panels.js` also has its own spec against that fake (`test/panelsModule.test.js`). Publishing: a GitHub release tagged `remote-v<version>` runs `.github/workflows/publish-remote.yml` (npm trusted publishing).
 
 ### Adding or changing a tool
 
@@ -78,7 +79,7 @@ Edit `packages/server/src/mcp/toolHandlers.js` (schema + handler); once the remo
 
 - ESM throughout (`"type": "module"`), no TypeScript, no linter.
 - Tool input schemas use zod; colors are `#rrggbb` hex.
-- Tests drive one package's public seam and assert what leaves it (socket messages, viewer calls, HTTP responses); no reaching into internals. The one exception is the search pipeline, whose pure modules are specced directly (design: "the prototype's vitest specs move with the modules").
+- Tests drive one package's public seam and assert what leaves it (socket messages, viewer calls, HTTP responses); no reaching into internals. Two exceptions: the search pipeline, whose pure modules are specced directly (design: "the prototype's vitest specs move with the modules"), and the remote's panels module (`packages/remote/src/panels.js`), specced through its own interface against the shared fake juicebox.js because both the command and the sync-event paths depend on it.
 - `.scratch/` (local issue tracker) and per-developer `.claude/settings*.json` are gitignored.
 
 ## Further docs
