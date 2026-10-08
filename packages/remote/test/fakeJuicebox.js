@@ -4,7 +4,7 @@ import { deflateRawSync } from 'node:zlib';
 /**
  * One fake juicebox.js for every remote spec: the `hic` namespace attachRemote is
  * given, and the platform WebSocket it is given a factory for. The surface is what
- * the remote touches (src/applyCommand.js, src/observe.js, src/attachRemote.js);
+ * the remote touches (src/applyCommand.js, src/observe.js, src/panels.js, src/attachRemote.js);
  * a new viewer method goes here, once.
  *
  * hic (fakeHic):

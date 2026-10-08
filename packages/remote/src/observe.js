@@ -1,5 +1,16 @@
 import { MessageType, SyncEventType } from './protocol.js';
-import { deletePanel, newPanel } from './applyCommand.js';
+import {
+  closePanel,
+  openPanel,
+  panelAt,
+  positionOf,
+  removeTrack,
+  setTrackAutoscale,
+  setTrackColor,
+  setTrackDataRange,
+  setTrackLogScale,
+  setTrackName,
+} from './panels.js';
 
 // While dragging, at most one locusChange per LOCUS_THROTTLE_MS, and the drag's
 // last position always goes out; otherwise one once changes stop for LOCUS_DEBOUNCE_MS.
@@ -16,6 +27,8 @@ const LOCUS_DEBOUNCE_MS = 100;
  * carries `panel`, the sender's 1-based position, and a peer's is applied to the panel at
  * that position. Opening and closing a panel are sync events too (`panelOpen`,
  * `panelClose`), so positions stay aligned across pages, empty panels included (ADR-0008).
+ * Panels and tracks are resolved, opened, closed and changed through panels.js, the same
+ * module the command applier uses; a track is found by its name (case-insensitively).
  * Changes made while `guard` runs are not sent, so applying a peer's sync event
  * or a command does not echo back. Applies must run one at a time.
  *
@@ -40,13 +53,10 @@ export function observe(hic, container, send) {
   // A 2D track has no browser of its own and is off its panel by the time its removal is posted.
   const panelOf2D = new WeakMap();
 
-  /** A browser's 1-based position from the left, what list_panels prints; 0 once it is closed. */
-  const positionOf = (browser) => hic.getAllBrowsers().indexOf(browser) + 1;
-
   /** Send a change made in `browser`'s panel; one in no open panel has no position to name. */
   const emit = (browser, syncType, payload) => {
     if (guarded) return;
-    const panel = positionOf(browser);
+    const panel = positionOf(hic, browser);
     if (panel) send({ type: MessageType.SYNC_EVENT, syncType, panel, ...payload });
   };
 
@@ -138,9 +148,16 @@ export function observe(hic, container, send) {
     return browser;
   }
 
+  /** An applier for an event on one panel: run on the panel the event names, if this page has it. */
+  const onPanel = (apply) => (event) => {
+    const browser = panelFor(event);
+    if (browser) return apply(browser, event);
+  };
+
+  // Each applier takes the peer's sync event; panels and tracks are resolved by panels.js.
   const appliers = {
-    [SyncEventType.LOCUS_CHANGE]: (browser, { syncState }) => browser.syncState(syncState),
-    [SyncEventType.COLOR_SCALE_CHANGE]: async (browser, { displayMode, threshold, isRatio, positive, negative, r, g, b }) => {
+    [SyncEventType.LOCUS_CHANGE]: onPanel((browser, { syncState }) => browser.syncState(syncState)),
+    [SyncEventType.COLOR_SCALE_CHANGE]: onPanel(async (browser, { displayMode, threshold, isRatio, positive, negative, r, g, b }) => {
       // A switch announces the new mode's threshold before the mode (juicebox.js's render inside
       // setDisplayMode fires onColorScaleChange), and A and B keep a threshold each, so the scale
       // goes to the mode it was sent from.
@@ -156,21 +173,22 @@ export function observe(hic, container, send) {
       }
       browser.contactMatrixView.setColorScale(colorScale);
       await browser.setColorScaleThreshold(Number(threshold)); // also invalidates the tiles, so it repaints
-    },
-    [SyncEventType.BACKGROUND_COLOR_CHANGE]: (browser, { color: { r, g, b } }) =>
+    }),
+    [SyncEventType.BACKGROUND_COLOR_CHANGE]: onPanel((browser, { color: { r, g, b } }) =>
       browser.contactMatrixView.setBackgroundColor({ r, g, b }),
-    [SyncEventType.NORMALIZATION_CHANGE]: (browser, { normalization }) => browser.setNormalization(normalization),
+    ),
+    [SyncEventType.NORMALIZATION_CHANGE]: onPanel((browser, { normalization }) => browser.setNormalization(normalization)),
     // The colorScaleChange sent ahead of it has usually switched this page already.
-    [SyncEventType.DISPLAY_MODE_CHANGE]: async (browser, { displayMode }) => {
+    [SyncEventType.DISPLAY_MODE_CHANGE]: onPanel(async (browser, { displayMode }) => {
       if (browser.getDisplayMode() !== displayMode) await browser.setDisplayMode(displayMode);
-    },
-    [SyncEventType.MAP_LOAD]: (browser, { url, name }) => browser.loadHicFile({ url, name }),
-    // Never the last panel: a page always shows one.
-    [SyncEventType.PANEL_CLOSE]: (browser) => {
-      if (hic.getAllBrowsers().length > 1) deletePanel(hic, browser);
-    },
-    [SyncEventType.CONTROL_MAP_LOAD]: (browser, { url, name }) => browser.loadHicControlFile({ url, name }),
-    [SyncEventType.TRACK_LOAD]: (browser, { configs }) => {
+    }),
+    [SyncEventType.MAP_LOAD]: onPanel((browser, { url, name }) => browser.loadHicFile({ url, name })),
+    // Opens an empty panel only at one past the last one, so positions stay aligned.
+    [SyncEventType.PANEL_OPEN]: ({ panel }) => openPanel(hic, container, panel),
+    // Never the last panel: a page always shows one (closePanel refuses, and the event is dropped).
+    [SyncEventType.PANEL_CLOSE]: onPanel((browser) => closePanel(hic, browser)),
+    [SyncEventType.CONTROL_MAP_LOAD]: onPanel((browser, { url, name }) => browser.loadHicControlFile({ url, name })),
+    [SyncEventType.TRACK_LOAD]: onPanel((browser, { configs }) => {
       // A url a track pair already carries (a pending one its own config, a loaded one its track's)
       // is not loaded again: a loadTrack command or a restored session reaches every page, and each
       // page's tracks load after the guard lifts (ADR-0017), so every page sends trackLoad for them.
@@ -181,29 +199,15 @@ export function observe(hic, container, send) {
       const toLoad = configs.filter(({ url }) => !held.has(url));
       // Resolves once every track has loaded, so their load events fall inside the guard.
       if (toLoad.length) return browser.loadTracks(toLoad);
-    },
-    [SyncEventType.TRACK_REMOVE]: (browser, { track }) => {
-      const { trackPair, track2D } = trackNamed(browser, track);
-      if (track2D) browser.removeTrack2D(track2D);
-      else browser.layoutController.removeTrackXYPair(trackPair);
-    },
-    [SyncEventType.TRACK_COLOR_CHANGE]: (browser, { track, colorString }) => {
-      const { trackPair, track2D } = trackNamed(browser, track);
-      if (track2D) browser.setTrack2DColor(track2D, colorString);
-      else trackPair.setColor(colorString);
-    },
-    [SyncEventType.TRACK_NAME_CHANGE]: (browser, { track, name }) => {
-      const { trackPair, track2D } = trackNamed(browser, track);
-      if (track2D) browser.setTrack2DName(track2D, name);
-      // What the track menu's rename writes; igv's setter relabels the row, which posts the change event.
-      else trackPair.track.name = name;
-    },
-    [SyncEventType.TRACK_DATA_RANGE_CHANGE]: (browser, { track, min, max }) =>
-      trackPairNamed(browser, track).setDataRange(min, max),
-    [SyncEventType.TRACK_AUTOSCALE_CHANGE]: (browser, { track, enabled }) =>
-      trackPairNamed(browser, track).setAutoscale(enabled),
-    [SyncEventType.TRACK_LOG_SCALE_CHANGE]: (browser, { track, enabled }) =>
-      trackPairNamed(browser, track).setLogScale(enabled),
+    }),
+    [SyncEventType.TRACK_REMOVE]: onPanel((browser, { track }) => removeTrack(browser, track)),
+    [SyncEventType.TRACK_COLOR_CHANGE]: onPanel((browser, { track, colorString }) => setTrackColor(browser, track, colorString)),
+    [SyncEventType.TRACK_NAME_CHANGE]: onPanel((browser, { track, name }) => setTrackName(browser, track, name)),
+    [SyncEventType.TRACK_DATA_RANGE_CHANGE]: onPanel((browser, { track, min, max }) =>
+      setTrackDataRange(browser, track, min, max),
+    ),
+    [SyncEventType.TRACK_AUTOSCALE_CHANGE]: onPanel((browser, { track, enabled }) => setTrackAutoscale(browser, track, enabled)),
+    [SyncEventType.TRACK_LOG_SCALE_CHANGE]: onPanel((browser, { track, enabled }) => setTrackLogScale(browser, track, enabled)),
   };
 
   /** A track pair's or a 2D track's change; peers name the track as they last heard it. */
@@ -212,21 +216,6 @@ export function observe(hic, container, send) {
     if (property === 'name') trackNames.set(subject, value); // also when guarded: peers now use it
     const change = trackChanges[property]?.(value);
     if (change) emit(browser, change[0], { track, ...change[1] });
-  }
-
-  function trackPairNamed(browser, name) {
-    const trackPair = browser.trackPairs.find((tp) => nameOf(tp) === name);
-    if (!trackPair) throw new Error(`No track named ${name}`);
-    return trackPair;
-  }
-
-  /** The track pair, or else the 2D track, peers know by `name`: `{trackPair}` or `{track2D}`. */
-  function trackNamed(browser, name) {
-    const trackPair = browser.trackPairs.find((tp) => nameOf(tp) === name);
-    if (trackPair) return { trackPair };
-    const track2D = browser.tracks2D.find((t) => nameOf(t) === name);
-    if (!track2D) throw new Error(`No track named ${name}`);
-    return { track2D };
   }
 
   // Rate limited per panel: panels synced within the page each send their own (ADR-0008).
@@ -241,7 +230,7 @@ export function observe(hic, container, send) {
 
   function sendLocus(browser, follow) {
     follow.lastLocusSent = Date.now();
-    const panel = positionOf(browser);
+    const panel = positionOf(hic, browser);
     const syncState = browser.getSyncState();
     if (panel && syncState) {
       send({ type: MessageType.SYNC_EVENT, syncType: SyncEventType.LOCUS_CHANGE, panel, syncState });
@@ -281,18 +270,7 @@ export function observe(hic, container, send) {
    */
   function panelFor({ panel, syncType }) {
     if (panel === undefined) return syncType === SyncEventType.PANEL_CLOSE ? undefined : hic.getCurrentBrowser();
-    if (!Number.isInteger(panel) || panel < 1) return undefined;
-    return hic.getAllBrowsers()[panel - 1];
-  }
-
-  /** A peer's sync event: panelOpen opens an empty panel only at one past the last one. */
-  async function applyEvent(event) {
-    if (event.syncType === SyncEventType.PANEL_OPEN) {
-      if (event.panel === hic.getAllBrowsers().length + 1) await newPanel(hic, container);
-      return;
-    }
-    const browser = panelFor(event);
-    if (browser) await appliers[event.syncType](browser, event);
+    return panelAt(hic, panel);
   }
 
   async function guard(fn) {
@@ -318,7 +296,7 @@ export function observe(hic, container, send) {
     async apply(event) {
       if (detached) return;
       try {
-        await guard(() => applyEvent(event));
+        await guard(() => appliers[event.syncType]?.(event));
       } catch {
         // Dropped: nothing to report it to.
       }
