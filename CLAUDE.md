@@ -51,7 +51,7 @@ A tool call flows: client → `/mcp` tool handler → Durable Object → WebSock
 - `src/index.js` — Worker entry: routes, CORS, MCP transport, session and room id minting, `/ws` Origin check.
 - `src/durableObjects/WebSocketRoom.js` — one Durable Object per room; owns the sockets, relays sync events to other peers, fans commands out and waits for acks, keeps the last saved session for late joiners (`requestSessionFromPeer` → `peerSessionData`). Every message re-arms an alarm 24 h out; it deletes the room's storage and, if no page is left, marks the room expired so later joins get `error {code: 'room-expired'}` (ADR-0006).
 - `src/durableObjects/McpSession.js` — one Durable Object per MCP session; stores the room `join_room` bound it to.
-- `src/mcp/toolHandlers.js` — the single `registerTools(mcpServer, deps)` tool catalogue. `deps` abstracts the Durable Object (`sendCommand`, `sendRequest`, `shortenURL`, …).
+- `src/mcp/toolHandlers.js` — the single `registerTools(mcpServer, deps)` tool catalogue: the command tools as rows of `COMMAND_TOOLS` registered in one loop, the request and local tools hand-registered. `deps` abstracts the Durable Object (`sendCommand`, `sendRequest`, `shortenURL`, …).
 - `src/search/` — dataset search pipeline: `catalogs` (ENCODE and 4DN igv-data TSV URLs + columns, copied from juicebox-web; keep in sync) → `dataSourceConfigs` (how each TSV is read) → `dataParsers` → `metadataEnricher` → `queryExpander` (genomics synonym dictionary) → `mapFilter` → `resultFormatter`. Beside it, `encodePortal.js` is the live ENCODE portal client behind `search_encode_hic` / `search_encode` (portal facts in its header).
 - `src/mcp/juiceboxView.js` — the MCP App view (`ui://juicebox/join`, SEP-1865) that `get_juicebox_url` names in `_meta`: a card with the join link and its QR (from `structuredContent`), shown in the app pane by hosts that render MCP Apps; the link opens through the host. Claude's sandbox forbids framing other origins, so the viewer itself is not embedded.
 - `src/qrPng.js`, `src/urlShortener.js` — join-link QR and TinyURL helpers.
@@ -73,7 +73,7 @@ The package never imports juicebox.js: the host passes its namespace as `hic`, a
 
 ### Adding or changing a tool
 
-Edit `packages/server/src/mcp/toolHandlers.js` (schema + handler); once the remote's command applier exists, add the matching row there. Tool names and schemas are part of the client contract; keep them stable.
+A command tool (one that sends one command to the pages) is a row of `COMMAND_TOOLS` in `packages/server/src/mcp/toolHandlers.js`: name, title, description, inputSchema, the `CommandType` member, the progress text, and only if needed a `command` override (rgb colours, refusals, parsing). Add the `CommandType` in `packages/remote/src/protocol.js` and its applier row in `packages/remote/src/applyCommand.js`, and the row to the payload table in `packages/server/test/mcp.test.js`; a consistency test requires every `CommandType` except `GET_*` to have exactly one tool. Request tools and local tools are hand-registered in the same file. Regenerate nothing: names, titles, descriptions and schemas are the client contract, pinned by `packages/server/test/fixtures/prototype-tools.json`, which changes only when the contract deliberately does.
 
 ## Conventions
 

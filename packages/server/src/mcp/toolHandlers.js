@@ -14,6 +14,7 @@ import { formatSearchResults, formatSearchResultsJSON } from '../search/resultFo
 import { generateQRPng } from '../qrPng.js';
 import { hicExperiments, formatHicExperiments, encodeSearch, formatEncodeSearch, HIC_ASSAYS, CLASSIFICATIONS } from '../search/encodePortal.js';
 import { VIEW_URI, VIEW_HTML, VIEW_META, VIEW_MIME_TYPE, TOOL_META } from './juiceboxView.js';
+import { CommandType } from '@aidenlab/juicebox-remote/protocol';
 
 // Helper function to convert hex color to RGB
 function hexToRgb(hex) {
@@ -35,6 +36,333 @@ const panelSchema = z.union([z.number().int().positive(), z.string()]).optional(
   .describe('panel: position from the left (1, 2, ...), a map name, or "all"; required when more than one panel is open');
 const onePanelSchema = z.union([z.number().int().positive(), z.string()]).optional()
   .describe('panel: position from the left (1, 2, ...) or a map name, no "all"; required when more than one panel is open');
+
+/** Thrown by a catalogue row's `command` to answer the tool call with `message` as an error, sending nothing. */
+class Refusal extends Error {}
+
+// Well-known track presets, resolved by keyword. The file depends on the map's genome,
+// which only the page knows (and "all" may span genomes), so the keyword travels as
+// `preset` and the remote picks the file per panel (ticket 32).
+const TRACK_PRESETS = {
+  genes: { name: 'Refseq Select', color: { r: 0, g: 0, b: 0 } }
+};
+
+const NORMALIZATION_NAMES = {
+  NONE: 'None',
+  VC: 'Coverage (VC)',
+  VC_SQRT: 'Coverage-Sqrt (VC_SQRT)',
+  KR: 'Balanced / Knight-Ruiz (KR)',
+  SCALE: 'SCALE',
+  INTER_SCALE: 'INTER_SCALE',
+  GW_SCALE: 'GW_SCALE'
+};
+
+/**
+ * The command tools: each row is one MCP tool that sends one command to every page in
+ * the room (design §5.2). A row names the tool (name, title, description, inputSchema:
+ * the client contract), the command `type` (a CommandType member), and the progress
+ * `text` (a string, or (args, command) => string) that the ack's outcome is reported
+ * with. The command is `{type, ...args}` unless the row's `command(args, {log})` builds
+ * the fields itself; it throws a Refusal to answer with an error and send nothing.
+ * Adding a command tool is adding a row here (and the CommandType and applier in the remote).
+ */
+const COMMAND_TOOLS = [
+  {
+    name: 'load_map',
+    title: 'Load Map',
+    description: 'Load a Hi-C contact map (.hic file) into Juicebox. With panel "new" the map opens in an additional panel beside the current one (side by side); otherwise it replaces the map in the panel named by `panel`, which is required when more than one panel is open.',
+    inputSchema: {
+      url: z.string().url().describe('URL to the .hic file'),
+      name: z.string().optional().describe('Optional name for the map'),
+      normalization: z.string().optional().describe('Normalization method (e.g., "VC", "VC_SQRT", "KR", "NONE")'),
+      locus: z.string().optional().describe('Optional genomic locus (e.g., "1:1000000-2000000 1:1000000-2000000")'),
+      panel: z.union([z.number().int().positive(), z.string()]).optional().describe('panel: "new" opens another panel beside the others and loads there (side-by-side comparisons); a position from the left (1, 2, ...) or a map name replaces that panel\'s map, no "all"; required when more than one panel is open')
+    },
+    type: CommandType.LOAD_MAP,
+    // Override: the text says when the map goes into a new panel.
+    text: ({ url, name, panel }) => `Loading map from ${url}${name ? ` (${name})` : ''}${panel === 'new' ? ' in a new panel' : ''}`
+  },
+  {
+    name: 'close_panel',
+    title: 'Close Panel',
+    description: 'Close one panel (contact-map viewer) of the page; the panels to its right move one position left. The last panel cannot be closed.',
+    inputSchema: { panel: onePanelSchema },
+    type: CommandType.CLOSE_PANEL,
+    text: 'Closing panel'
+  },
+  {
+    name: 'load_control_map',
+    title: 'Load Control Map',
+    description: 'Load a control map (.hic file) for comparison',
+    inputSchema: {
+      url: z.string().url().describe('URL to the control .hic file'),
+      name: z.string().optional().describe('Optional name for the control map'),
+      normalization: z.string().optional().describe('Normalization method (e.g., "VC", "VC_SQRT", "KR", "NONE")'),
+      panel: onePanelSchema
+    },
+    type: CommandType.LOAD_CONTROL_MAP,
+    text: ({ url, name }) => `Loading control map from ${url}${name ? ` (${name})` : ''}`
+  },
+  {
+    name: 'load_session',
+    title: 'Load Session',
+    description: 'Load a Juicebox session from JSON data, attached file, or remote URL. Sessions restore browser configurations, loci, tracks, and visualization state. Supports three input methods: (1) direct JSON paste, (2) file attachment, (3) URL-based loading from remote sources (Dropbox, AWS, etc.).',
+    inputSchema: {
+      sessionData: z.string().optional().describe('JSON string of session data (use when pasting JSON directly into chat)'),
+      sessionUrl: z.string().url().optional().describe('URL to fetch session JSON from remote source (e.g., Dropbox, AWS S3, GitHub raw file URL)'),
+      fileContent: z.string().optional().describe('Content of attached session file (use when user attaches a .json file to the chat)')
+    },
+    type: CommandType.LOAD_SESSION,
+    // Override: the session is parsed (or fetched) here and sent as an object.
+    async command({ sessionData, sessionUrl, fileContent }, { log }) {
+      try {
+        let parsedSession;
+        if (fileContent) {
+          parsedSession = JSON.parse(fileContent);
+        } else if (sessionData) {
+          parsedSession = JSON.parse(sessionData);
+        } else if (sessionUrl) {
+          let normalizedUrl = sessionUrl;
+          if (sessionUrl.includes('dropbox.com') && sessionUrl.includes('dl=0')) {
+            normalizedUrl = sessionUrl.replace('dl=0', 'dl=1');
+            log.logInfo(`Normalized Dropbox URL: ${normalizedUrl}`);
+          }
+          log.logInfo(`Fetching session from URL: ${normalizedUrl}`);
+          const response = await fetch(normalizedUrl);
+          if (!response.ok) {
+            throw new Error(`Failed to fetch session from URL: ${response.status} ${response.statusText}`);
+          }
+          const responseText = await response.text();
+          if (responseText.trim().startsWith('<!DOCTYPE') || responseText.trim().startsWith('<html')) {
+            throw new Error('Received HTML instead of JSON. The URL may be a preview link. For Dropbox links, ensure dl=1 parameter is set, or use a direct download link.');
+          }
+          try {
+            parsedSession = JSON.parse(responseText);
+          } catch (parseError) {
+            log.logError(`Failed to parse JSON from URL. Response preview: ${responseText.substring(0, 200)}...`);
+            throw new Error(`Invalid JSON received from URL: ${parseError.message}. The URL may not point to a valid JSON file.`);
+          }
+        } else {
+          throw new Error('No session data provided. Provide sessionData (for pasted JSON), sessionUrl (for remote URLs like Dropbox/AWS), or attach a file.');
+        }
+
+        if (!parsedSession.browsers && !parsedSession.url) {
+          throw new Error('Invalid session format: must contain "browsers" array or browser config');
+        }
+        return { sessionData: parsedSession };
+      } catch (error) {
+        log.logError(`Error loading session: ${error.message}`);
+        throw new Refusal(`Error loading session: ${error.message}`);
+      }
+    },
+    text: (args, { sessionData }) => `Session loaded successfully. Restored ${sessionData.browsers ? sessionData.browsers.length : 1} browser(s).`
+  },
+  {
+    name: 'zoom_in',
+    title: 'Zoom In',
+    description: 'Zoom in on the contact map',
+    inputSchema: {
+      centerX: z.number().optional().describe('Optional X coordinate for zoom center (pixels)'),
+      centerY: z.number().optional().describe('Optional Y coordinate for zoom center (pixels)'),
+      panel: panelSchema
+    },
+    type: CommandType.ZOOM_IN,
+    text: 'Zooming in'
+  },
+  {
+    name: 'zoom_out',
+    title: 'Zoom Out',
+    description: 'Zoom out on the contact map',
+    inputSchema: {
+      centerX: z.number().optional().describe('Optional X coordinate for zoom center (pixels)'),
+      centerY: z.number().optional().describe('Optional Y coordinate for zoom center (pixels)'),
+      panel: panelSchema
+    },
+    type: CommandType.ZOOM_OUT,
+    text: 'Zooming out'
+  },
+  {
+    name: 'set_map_foreground_color',
+    title: 'Set Map Foreground Color',
+    description: 'Set the foreground color scale for the contact map',
+    inputSchema: {
+      color: colorSchema,
+      threshold: z.number().positive().optional().describe('Optional threshold value for the color scale'),
+      panel: panelSchema
+    },
+    type: CommandType.SET_FOREGROUND_COLOR,
+    // Override: the page takes rgb, not hex.
+    command: ({ color, threshold, panel }) => ({ color: hexToRgb(color), threshold, panel }),
+    text: ({ color, threshold }) => `Map foreground color set to ${color}${threshold ? ` with threshold ${threshold}` : ''}`
+  },
+  {
+    name: 'set_map_background_color',
+    title: 'Set Map Background Color',
+    description: 'Set the background color of the contact map',
+    inputSchema: { color: colorSchema, panel: panelSchema },
+    type: CommandType.SET_BACKGROUND_COLOR,
+    // Override: the page takes rgb, not hex.
+    command: ({ color, panel }) => ({ color: hexToRgb(color), panel }),
+    text: ({ color }) => `Map background color set to ${color}`
+  },
+  {
+    name: 'set_color_scale',
+    title: 'Set Color Scale',
+    description: 'Adjust the color scale (threshold) of the contact map. Use "increase" to double the threshold (lighter), "decrease" to halve it (darker), or set an exact numeric value.',
+    inputSchema: {
+      action: z.enum(['increase', 'decrease', 'set']).describe('Action: "increase" doubles the threshold, "decrease" halves it, "set" uses the provided value'),
+      value: z.number().positive().optional().describe('Exact threshold value (required when action is "set")'),
+      panel: panelSchema
+    },
+    type: CommandType.SET_COLOR_SCALE,
+    // Override: "set" needs a value.
+    command(args) {
+      if (args.action === 'set' && (args.value === undefined || args.value === null)) {
+        throw new Refusal('A positive numeric value is required when action is "set"');
+      }
+      return args;
+    },
+    text: ({ action, value }) => `Color scale threshold ${action === 'set' ? `set to ${value}` : action === 'increase' ? 'increased (doubled)' : 'decreased (halved)'}`
+  },
+  {
+    name: 'load_track',
+    title: 'Load Track',
+    description: 'Load a 1D or 2D track into Juicebox from a URL. Supports bigWig, bigBed, bedGraph, bed, bedpe, interact, annotation, and other standard genomic track formats. The format is auto-detected from the file extension. When the user asks for a "genes" track, use the keyword "genes" as the url — it loads the NCBI RefSeq Select gene track for the genome of the map in that panel.',
+    inputSchema: {
+      url: z.string().describe('URL to the track file (e.g., bigWig, bigBed, bed, bedpe), or the keyword "genes" for the built-in gene track'),
+      name: z.string().optional().describe('Optional display name for the track'),
+      color: colorSchema.optional().describe('Optional track color as hex code (e.g., "#ff0000")'),
+      panel: z.union([z.number().int().positive(), z.string()]).optional().describe('panel: position from the left (1, 2, ...), a map name, or "all"; required when more than one panel is open')
+    },
+    type: CommandType.LOAD_TRACK,
+    // Override: a preset keyword travels as `preset` with its default name and colour; colours go as rgb.
+    command({ url, name, color, panel }) {
+      const presetKey = url.toLowerCase();
+      const preset = TRACK_PRESETS[presetKey];
+      const resolvedColor = color ? hexToRgb(color) : preset?.color;
+      const command = preset ? { preset: presetKey, name: name || preset.name } : { url, name };
+      if (resolvedColor) command.color = resolvedColor;
+      if (panel !== undefined) command.panel = panel;
+      return command;
+    },
+    text: (args, { url, preset, name }) => `Loading track${name ? ` "${name}"` : ''} from ${preset ? `the ${preset} preset for the map's genome` : url}`
+  },
+  {
+    name: 'select_normalization',
+    title: 'Select Normalization',
+    description: 'Change the normalization method for the currently loaded Hi-C contact map. This changes the normalization in-place without reloading the map. Available normalizations: NONE (raw counts), VC (Coverage), VC_SQRT (Coverage-Sqrt), KR (Balanced / Knight-Ruiz matrix balancing), SCALE, INTER_SCALE, GW_SCALE. The user may refer to normalizations by either their internal name or their visual/spoken name.',
+    inputSchema: {
+      normalization: z.string()
+        .describe('Normalization method. Common values: NONE (raw counts), VC (Coverage), VC_SQRT (Coverage-Sqrt), KR (Balanced / Knight-Ruiz), SCALE, INTER_SCALE, GW_SCALE. The available normalizations depend on the loaded map.'),
+      panel: panelSchema
+    },
+    type: CommandType.SET_NORMALIZATION,
+    text: ({ normalization }) => `Normalization set to ${NORMALIZATION_NAMES[normalization] || normalization}`
+  },
+  {
+    name: 'remove_track',
+    title: 'Remove Track',
+    description: 'Remove a loaded track from Juicebox by name or index number (use list_tracks to see available tracks).',
+    inputSchema: {
+      track: z.string().describe('Track name or 1-based index number'),
+      panel: panelSchema
+    },
+    type: CommandType.REMOVE_TRACK,
+    text: ({ track }) => `Removing track: ${track}`
+  },
+  {
+    name: 'set_track_color',
+    title: 'Set Track Color',
+    description: 'Set or reset the color of a loaded track. Omit color to reset to default.',
+    inputSchema: {
+      track: z.string().describe('Track name or 1-based index number'),
+      color: colorSchema.optional().describe('Hex color (e.g., "#ff0000"). Omit to reset to default.'),
+      panel: panelSchema
+    },
+    type: CommandType.SET_TRACK_COLOR,
+    // Override: the page takes rgb, not hex; no color resets the track's colour, and the text says so.
+    command: ({ track, color, panel }) => (color ? { track, panel, color: hexToRgb(color) } : { track, panel }),
+    text: ({ track, color }) => (color ? `Setting track "${track}" color to ${color}` : `Resetting track "${track}" color to default`)
+  },
+  {
+    name: 'set_track_name',
+    title: 'Set Track Name',
+    description: 'Rename a loaded track.',
+    inputSchema: {
+      track: z.string().describe('Current track name or 1-based index number'),
+      name: z.string().describe('New display name for the track'),
+      panel: panelSchema
+    },
+    type: CommandType.SET_TRACK_NAME,
+    text: ({ track, name }) => `Renaming track "${track}" to "${name}"`
+  },
+  {
+    name: 'set_track_data_range',
+    title: 'Set Track Data Range',
+    description: 'Set the min/max data range for a 1D track. This disables autoscale.',
+    inputSchema: {
+      track: z.string().describe('Track name or 1-based index number'),
+      min: z.number().describe('Minimum value'),
+      max: z.number().describe('Maximum value'),
+      panel: panelSchema
+    },
+    type: CommandType.SET_TRACK_DATA_RANGE,
+    text: ({ track, min, max }) => `Setting track "${track}" data range to [${min}, ${max}]`
+  },
+  {
+    name: 'set_track_autoscale',
+    title: 'Set Track Autoscale',
+    description: 'Enable or disable autoscale for a 1D track.',
+    inputSchema: {
+      track: z.string().describe('Track name or 1-based index number'),
+      enabled: z.boolean().default(true).describe('Enable (true) or disable (false) autoscale'),
+      panel: panelSchema
+    },
+    type: CommandType.SET_TRACK_AUTOSCALE,
+    text: ({ track, enabled }) => `${enabled ? 'Enabling' : 'Disabling'} autoscale for track "${track}"`
+  },
+  {
+    name: 'set_track_log_scale',
+    title: 'Set Track Log Scale',
+    description: 'Enable or disable log scale for a 1D track.',
+    inputSchema: {
+      track: z.string().describe('Track name or 1-based index number'),
+      enabled: z.boolean().default(true).describe('Enable (true) or disable (false) log scale'),
+      panel: panelSchema
+    },
+    type: CommandType.SET_TRACK_LOG_SCALE,
+    text: ({ track, enabled }) => `${enabled ? 'Enabling' : 'Disabling'} log scale for track "${track}"`
+  },
+  {
+    name: 'goto_locus',
+    title: 'Navigate to Locus',
+    description: 'Navigate to a specific genomic locus in the currently loaded map. Supports natural language, gene names, standard format, and structured objects. Examples: "chr1:1000-2000", "BRCA1", "chromosome 1 from 1000 to 2000", or {chr: "chr1", start: 1000, end: 2000}. When a single chromosome is specified, it applies to both axes of the Hi-C contact map.',
+    inputSchema: {
+      locus: z.union([
+        z.string().describe('Locus specification as string (natural language, standard format, or gene name). Examples: "chr1:1000-2000", "BRCA1", "chromosome 1 from 1000 to 2000"'),
+        z.object({
+          chr: z.string().describe('Chromosome name (e.g., "chr1")'),
+          start: z.number().optional().describe('Start position in base pairs (1-based)'),
+          end: z.number().optional().describe('End position in base pairs (1-based)')
+        }).describe('Locus specification as structured object')
+      ]).describe('Locus to navigate to.'),
+      panel: panelSchema
+    },
+    type: CommandType.GOTO_LOCUS,
+    // Override: an empty locus is refused.
+    command(args) {
+      if (!args.locus) throw new Refusal('Error: Locus specification is required');
+      return args;
+    },
+    text({ locus }) {
+      if (typeof locus === 'string') return `Navigating to locus: ${locus}`;
+      if (typeof locus === 'object' && locus.chr) {
+        return `Navigating to locus: ${locus.start !== undefined && locus.end !== undefined ? `${locus.chr}:${locus.start}-${locus.end}` : locus.chr}`;
+      }
+      return `Navigating to locus: ${JSON.stringify(locus)}`;
+    }
+  }
+];
 
 /**
  * Register all MCP tools on the given server instance.
@@ -118,265 +446,20 @@ export function registerTools(mcpServer, deps) {
     { description: 'MCP App view for get_juicebox_url: the join link and its QR code', mimeType: VIEW_MIME_TYPE },
     async (uri) => ({ contents: [{ uri: uri.href, mimeType: VIEW_MIME_TYPE, text: VIEW_HTML, _meta: VIEW_META }] })
   );
-  // --- Tool: load_map ---
-  mcpServer.registerTool(
-    'load_map',
-    {
-      title: 'Load Map',
-      description: 'Load a Hi-C contact map (.hic file) into Juicebox. With panel "new" the map opens in an additional panel beside the current one (side by side); otherwise it replaces the map in the panel named by `panel`, which is required when more than one panel is open.',
-      inputSchema: {
-        url: z.string().url().describe('URL to the .hic file'),
-        name: z.string().optional().describe('Optional name for the map'),
-        normalization: z.string().optional().describe('Normalization method (e.g., "VC", "VC_SQRT", "KR", "NONE")'),
-        locus: z.string().optional().describe('Optional genomic locus (e.g., "1:1000000-2000000 1:1000000-2000000")'),
-        panel: z.union([z.number().int().positive(), z.string()]).optional().describe('panel: "new" opens another panel beside the others and loads there (side-by-side comparisons); a position from the left (1, 2, ...) or a map name replaces that panel\'s map, no "all"; required when more than one panel is open')
-      }
-    },
-    async ({ url, name, normalization, locus, panel }) => {
-      return runCommand('load_map', { type: 'loadMap', url, name, normalization, locus, panel }, `Loading map from ${url}${name ? ` (${name})` : ''}${panel === 'new' ? ' in a new panel' : ''}`);
-    }
-  );
-
-  // --- Tool: close_panel ---
-  mcpServer.registerTool(
-    'close_panel',
-    {
-      title: 'Close Panel',
-      description: 'Close one panel (contact-map viewer) of the page; the panels to its right move one position left. The last panel cannot be closed.',
-      inputSchema: { panel: onePanelSchema }
-    },
-    async ({ panel }) => {
-      return runCommand('close_panel', { type: 'closePanel', panel }, 'Closing panel');
-    }
-  );
-
-  // --- Tool: load_control_map ---
-  mcpServer.registerTool(
-    'load_control_map',
-    {
-      title: 'Load Control Map',
-      description: 'Load a control map (.hic file) for comparison',
-      inputSchema: {
-        url: z.string().url().describe('URL to the control .hic file'),
-        name: z.string().optional().describe('Optional name for the control map'),
-        normalization: z.string().optional().describe('Normalization method (e.g., "VC", "VC_SQRT", "KR", "NONE")'),
-        panel: onePanelSchema
-      }
-    },
-    async ({ url, name, normalization, panel }) => {
-      return runCommand('load_control_map', { type: 'loadControlMap', url, name, normalization, panel }, `Loading control map from ${url}${name ? ` (${name})` : ''}`);
-    }
-  );
-
-  // --- Tool: load_session ---
-  mcpServer.registerTool(
-    'load_session',
-    {
-      title: 'Load Session',
-      description: 'Load a Juicebox session from JSON data, attached file, or remote URL. Sessions restore browser configurations, loci, tracks, and visualization state. Supports three input methods: (1) direct JSON paste, (2) file attachment, (3) URL-based loading from remote sources (Dropbox, AWS, etc.).',
-      inputSchema: {
-        sessionData: z.string().optional().describe('JSON string of session data (use when pasting JSON directly into chat)'),
-        sessionUrl: z.string().url().optional().describe('URL to fetch session JSON from remote source (e.g., Dropbox, AWS S3, GitHub raw file URL)'),
-        fileContent: z.string().optional().describe('Content of attached session file (use when user attaches a .json file to the chat)')
-      }
-    },
-    async ({ sessionData, sessionUrl, fileContent }) => {
-      let parsedSession;
+  // The command tools: one registration per catalogue row (COMMAND_TOOLS).
+  for (const row of COMMAND_TOOLS) {
+    const { name, title, description, inputSchema, type, text } = row;
+    mcpServer.registerTool(name, { title, description, inputSchema }, async (args) => {
+      let command;
       try {
-        if (fileContent) {
-          parsedSession = JSON.parse(fileContent);
-        } else if (sessionData) {
-          parsedSession = JSON.parse(sessionData);
-        } else if (sessionUrl) {
-          let normalizedUrl = sessionUrl;
-          if (sessionUrl.includes('dropbox.com') && sessionUrl.includes('dl=0')) {
-            normalizedUrl = sessionUrl.replace('dl=0', 'dl=1');
-            log.logInfo(`Normalized Dropbox URL: ${normalizedUrl}`);
-          }
-          log.logInfo(`Fetching session from URL: ${normalizedUrl}`);
-          const response = await fetch(normalizedUrl);
-          if (!response.ok) {
-            throw new Error(`Failed to fetch session from URL: ${response.status} ${response.statusText}`);
-          }
-          const responseText = await response.text();
-          if (responseText.trim().startsWith('<!DOCTYPE') || responseText.trim().startsWith('<html')) {
-            throw new Error('Received HTML instead of JSON. The URL may be a preview link. For Dropbox links, ensure dl=1 parameter is set, or use a direct download link.');
-          }
-          try {
-            parsedSession = JSON.parse(responseText);
-          } catch (parseError) {
-            log.logError(`Failed to parse JSON from URL. Response preview: ${responseText.substring(0, 200)}...`);
-            throw new Error(`Invalid JSON received from URL: ${parseError.message}. The URL may not point to a valid JSON file.`);
-          }
-        } else {
-          throw new Error('No session data provided. Provide sessionData (for pasted JSON), sessionUrl (for remote URLs like Dropbox/AWS), or attach a file.');
-        }
-
-        if (!parsedSession.browsers && !parsedSession.url) {
-          throw new Error('Invalid session format: must contain "browsers" array or browser config');
-        }
-
-        const browserCount = parsedSession.browsers ? parsedSession.browsers.length : 1;
-        return await runCommand('load_session', { type: 'loadSession', sessionData: parsedSession }, `Session loaded successfully. Restored ${browserCount} browser(s).`);
+        command = { type, ...(row.command ? await row.command(args, { log }) : args) };
       } catch (error) {
-        log.logError(`Error loading session: ${error.message}`);
-        return { content: [{ type: 'text', text: `Error loading session: ${error.message}` }], isError: true };
+        if (error instanceof Refusal) return { content: [{ type: 'text', text: error.message }], isError: true };
+        throw error;
       }
-    }
-  );
-
-  // --- Tool: zoom_in ---
-  mcpServer.registerTool(
-    'zoom_in',
-    {
-      title: 'Zoom In',
-      description: 'Zoom in on the contact map',
-      inputSchema: {
-        centerX: z.number().optional().describe('Optional X coordinate for zoom center (pixels)'),
-        centerY: z.number().optional().describe('Optional Y coordinate for zoom center (pixels)'),
-        panel: panelSchema
-      }
-    },
-    async ({ centerX, centerY, panel }) => {
-      return runCommand('zoom_in', { type: 'zoomIn', centerX, centerY, panel }, 'Zooming in');
-    }
-  );
-
-  // --- Tool: zoom_out ---
-  mcpServer.registerTool(
-    'zoom_out',
-    {
-      title: 'Zoom Out',
-      description: 'Zoom out on the contact map',
-      inputSchema: {
-        centerX: z.number().optional().describe('Optional X coordinate for zoom center (pixels)'),
-        centerY: z.number().optional().describe('Optional Y coordinate for zoom center (pixels)'),
-        panel: panelSchema
-      }
-    },
-    async ({ centerX, centerY, panel }) => {
-      return runCommand('zoom_out', { type: 'zoomOut', centerX, centerY, panel }, 'Zooming out');
-    }
-  );
-
-  // --- Tool: set_map_foreground_color ---
-  mcpServer.registerTool(
-    'set_map_foreground_color',
-    {
-      title: 'Set Map Foreground Color',
-      description: 'Set the foreground color scale for the contact map',
-      inputSchema: {
-        color: colorSchema,
-        threshold: z.number().positive().optional().describe('Optional threshold value for the color scale'),
-        panel: panelSchema
-      }
-    },
-    async ({ color, threshold, panel }) => {
-      const rgb = hexToRgb(color);
-      if (!rgb) {
-        return { content: [{ type: 'text', text: `Invalid color: ${color}. Please use a hex code (e.g., "#ff0000")` }], isError: true };
-      }
-      return runCommand('set_map_foreground_color', { type: 'setForegroundColor', color: rgb, threshold, panel }, `Map foreground color set to ${color}${threshold ? ` with threshold ${threshold}` : ''}`);
-    }
-  );
-
-  // --- Tool: set_map_background_color ---
-  mcpServer.registerTool(
-    'set_map_background_color',
-    {
-      title: 'Set Map Background Color',
-      description: 'Set the background color of the contact map',
-      inputSchema: { color: colorSchema, panel: panelSchema }
-    },
-    async ({ color, panel }) => {
-      const rgb = hexToRgb(color);
-      if (!rgb) {
-        return { content: [{ type: 'text', text: `Invalid color: ${color}. Please use a hex code (e.g., "#000000")` }], isError: true };
-      }
-      return runCommand('set_map_background_color', { type: 'setBackgroundColor', color: rgb, panel }, `Map background color set to ${color}`);
-    }
-  );
-
-  // --- Tool: set_color_scale ---
-  mcpServer.registerTool(
-    'set_color_scale',
-    {
-      title: 'Set Color Scale',
-      description: 'Adjust the color scale (threshold) of the contact map. Use "increase" to double the threshold (lighter), "decrease" to halve it (darker), or set an exact numeric value.',
-      inputSchema: {
-        action: z.enum(['increase', 'decrease', 'set']).describe('Action: "increase" doubles the threshold, "decrease" halves it, "set" uses the provided value'),
-        value: z.number().positive().optional().describe('Exact threshold value (required when action is "set")'),
-        panel: panelSchema
-      }
-    },
-    async ({ action, value, panel }) => {
-      if (action === 'set' && (value === undefined || value === null)) {
-        return { content: [{ type: 'text', text: 'A positive numeric value is required when action is "set"' }], isError: true };
-      }
-      const desc = action === 'set' ? `set to ${value}` : action === 'increase' ? 'increased (doubled)' : 'decreased (halved)';
-      return runCommand('set_color_scale', { type: 'setColorScale', action, value, panel }, `Color scale threshold ${desc}`);
-    }
-  );
-
-  // Well-known track presets, resolved by keyword. The file depends on the map's genome,
-  // which only the page knows (and "all" may span genomes), so the keyword travels as
-  // `preset` and the remote picks the file per panel (ticket 32).
-  const TRACK_PRESETS = {
-    genes: { name: 'Refseq Select', color: { r: 0, g: 0, b: 0 } }
-  };
-
-  // --- Tool: load_track ---
-  mcpServer.registerTool(
-    'load_track',
-    {
-      title: 'Load Track',
-      description: 'Load a 1D or 2D track into Juicebox from a URL. Supports bigWig, bigBed, bedGraph, bed, bedpe, interact, annotation, and other standard genomic track formats. The format is auto-detected from the file extension. When the user asks for a "genes" track, use the keyword "genes" as the url — it loads the NCBI RefSeq Select gene track for the genome of the map in that panel.',
-      inputSchema: {
-        url: z.string().describe('URL to the track file (e.g., bigWig, bigBed, bed, bedpe), or the keyword "genes" for the built-in gene track'),
-        name: z.string().optional().describe('Optional display name for the track'),
-        color: colorSchema.optional().describe('Optional track color as hex code (e.g., "#ff0000")'),
-        panel: z.union([z.number().int().positive(), z.string()]).optional().describe('panel: position from the left (1, 2, ...), a map name, or "all"; required when more than one panel is open')
-      }
-    },
-    async ({ url, name, color, panel }) => {
-      const presetKey = url.toLowerCase();
-      const preset = TRACK_PRESETS[presetKey];
-      const resolvedName = name || preset?.name;
-      const resolvedColor = color ? hexToRgb(color) : preset?.color;
-
-      const command = preset ? { type: 'loadTrack', preset: presetKey, name: resolvedName } : { type: 'loadTrack', url, name: resolvedName };
-      if (resolvedColor) command.color = resolvedColor;
-      if (panel !== undefined) command.panel = panel;
-      const source = preset ? `the ${presetKey} preset for the map's genome` : url;
-      return runCommand('load_track', command, `Loading track${resolvedName ? ` "${resolvedName}"` : ''} from ${source}`);
-    }
-  );
-
-  // --- Tool: select_normalization ---
-  mcpServer.registerTool(
-    'select_normalization',
-    {
-      title: 'Select Normalization',
-      description: 'Change the normalization method for the currently loaded Hi-C contact map. This changes the normalization in-place without reloading the map. Available normalizations: NONE (raw counts), VC (Coverage), VC_SQRT (Coverage-Sqrt), KR (Balanced / Knight-Ruiz matrix balancing), SCALE, INTER_SCALE, GW_SCALE. The user may refer to normalizations by either their internal name or their visual/spoken name.',
-      inputSchema: {
-        normalization: z.string()
-          .describe('Normalization method. Common values: NONE (raw counts), VC (Coverage), VC_SQRT (Coverage-Sqrt), KR (Balanced / Knight-Ruiz), SCALE, INTER_SCALE, GW_SCALE. The available normalizations depend on the loaded map.'),
-        panel: panelSchema
-      }
-    },
-    async ({ normalization, panel }) => {
-      const normNames = {
-        NONE: 'None',
-        VC: 'Coverage (VC)',
-        VC_SQRT: 'Coverage-Sqrt (VC_SQRT)',
-        KR: 'Balanced / Knight-Ruiz (KR)',
-        SCALE: 'SCALE',
-        INTER_SCALE: 'INTER_SCALE',
-        GW_SCALE: 'GW_SCALE'
-      };
-      return runCommand('select_normalization', { type: 'setNormalization', normalization, panel }, `Normalization set to ${normNames[normalization] || normalization}`);
-    }
-  );
+      return runCommand(name, command, typeof text === 'function' ? text(args, command) : text);
+    });
+  }
 
   // --- Tool: list_tracks ---
   mcpServer.registerTool(
@@ -408,113 +491,6 @@ export function registerTools(mcpServer, deps) {
       const { result: panels, error } = await runRequest('getPanelList');
       if (error) return error;
       return { content: [{ type: 'text', text: JSON.stringify(panels, null, 2) }] };
-    }
-  );
-
-  // --- Tool: remove_track ---
-  mcpServer.registerTool(
-    'remove_track',
-    {
-      title: 'Remove Track',
-      description: 'Remove a loaded track from Juicebox by name or index number (use list_tracks to see available tracks).',
-      inputSchema: {
-        track: z.string().describe('Track name or 1-based index number'),
-        panel: panelSchema
-      }
-    },
-    async ({ track, panel }) => {
-      return runCommand('remove_track', { type: 'removeTrack', track, panel }, `Removing track: ${track}`);
-    }
-  );
-
-  // --- Tool: set_track_color ---
-  mcpServer.registerTool(
-    'set_track_color',
-    {
-      title: 'Set Track Color',
-      description: 'Set or reset the color of a loaded track. Omit color to reset to default.',
-      inputSchema: {
-        track: z.string().describe('Track name or 1-based index number'),
-        color: colorSchema.optional().describe('Hex color (e.g., "#ff0000"). Omit to reset to default.'),
-        panel: panelSchema
-      }
-    },
-    async ({ track, color, panel }) => {
-      const command = { type: 'setTrackColor', track, panel };
-      if (color) {
-        const rgb = hexToRgb(color);
-        if (rgb) command.color = rgb;
-      }
-      return runCommand('set_track_color', command, color ? `Setting track "${track}" color to ${color}` : `Resetting track "${track}" color to default`);
-    }
-  );
-
-  // --- Tool: set_track_name ---
-  mcpServer.registerTool(
-    'set_track_name',
-    {
-      title: 'Set Track Name',
-      description: 'Rename a loaded track.',
-      inputSchema: {
-        track: z.string().describe('Current track name or 1-based index number'),
-        name: z.string().describe('New display name for the track'),
-        panel: panelSchema
-      }
-    },
-    async ({ track, name, panel }) => {
-      return runCommand('set_track_name', { type: 'setTrackName', track, name, panel }, `Renaming track "${track}" to "${name}"`);
-    }
-  );
-
-  // --- Tool: set_track_data_range ---
-  mcpServer.registerTool(
-    'set_track_data_range',
-    {
-      title: 'Set Track Data Range',
-      description: 'Set the min/max data range for a 1D track. This disables autoscale.',
-      inputSchema: {
-        track: z.string().describe('Track name or 1-based index number'),
-        min: z.number().describe('Minimum value'),
-        max: z.number().describe('Maximum value'),
-        panel: panelSchema
-      }
-    },
-    async ({ track, min, max, panel }) => {
-      return runCommand('set_track_data_range', { type: 'setTrackDataRange', track, min, max, panel }, `Setting track "${track}" data range to [${min}, ${max}]`);
-    }
-  );
-
-  // --- Tool: set_track_autoscale ---
-  mcpServer.registerTool(
-    'set_track_autoscale',
-    {
-      title: 'Set Track Autoscale',
-      description: 'Enable or disable autoscale for a 1D track.',
-      inputSchema: {
-        track: z.string().describe('Track name or 1-based index number'),
-        enabled: z.boolean().default(true).describe('Enable (true) or disable (false) autoscale'),
-        panel: panelSchema
-      }
-    },
-    async ({ track, enabled, panel }) => {
-      return runCommand('set_track_autoscale', { type: 'setTrackAutoscale', track, enabled, panel }, `${enabled ? 'Enabling' : 'Disabling'} autoscale for track "${track}"`);
-    }
-  );
-
-  // --- Tool: set_track_log_scale ---
-  mcpServer.registerTool(
-    'set_track_log_scale',
-    {
-      title: 'Set Track Log Scale',
-      description: 'Enable or disable log scale for a 1D track.',
-      inputSchema: {
-        track: z.string().describe('Track name or 1-based index number'),
-        enabled: z.boolean().default(true).describe('Enable (true) or disable (false) log scale'),
-        panel: panelSchema
-      }
-    },
-    async ({ track, enabled, panel }) => {
-      return runCommand('set_track_log_scale', { type: 'setTrackLogScale', track, enabled, panel }, `${enabled ? 'Enabling' : 'Disabling'} log scale for track "${track}"`);
     }
   );
 
@@ -810,42 +786,6 @@ Just ask:
       ).join('\n\n');
       const portal = 'ENCODE portal (live search of encodeproject.org, not a catalog):\n  search_encode_hic — Hi-C experiments with their map and track files (tissues, intact Hi-C, cell lines)\n  search_encode — any other assay, annotation, biosample or publication';
       return { content: [{ type: 'text', text: `Available data sources:\n\n${formatted}\n\n${portal}` }] };
-    }
-  );
-
-  // --- Tool: goto_locus ---
-  mcpServer.registerTool(
-    'goto_locus',
-    {
-      title: 'Navigate to Locus',
-      description: 'Navigate to a specific genomic locus in the currently loaded map. Supports natural language, gene names, standard format, and structured objects. Examples: "chr1:1000-2000", "BRCA1", "chromosome 1 from 1000 to 2000", or {chr: "chr1", start: 1000, end: 2000}. When a single chromosome is specified, it applies to both axes of the Hi-C contact map.',
-      inputSchema: {
-        locus: z.union([
-          z.string().describe('Locus specification as string (natural language, standard format, or gene name). Examples: "chr1:1000-2000", "BRCA1", "chromosome 1 from 1000 to 2000"'),
-          z.object({
-            chr: z.string().describe('Chromosome name (e.g., "chr1")'),
-            start: z.number().optional().describe('Start position in base pairs (1-based)'),
-            end: z.number().optional().describe('End position in base pairs (1-based)')
-          }).describe('Locus specification as structured object')
-        ]).describe('Locus to navigate to.'),
-        panel: panelSchema
-      }
-    },
-    async ({ locus, panel }) => {
-      if (!locus) {
-        return { content: [{ type: 'text', text: 'Error: Locus specification is required' }], isError: true };
-      }
-      let locusDisplay;
-      if (typeof locus === 'string') {
-        locusDisplay = locus;
-      } else if (typeof locus === 'object' && locus.chr) {
-        locusDisplay = locus.start !== undefined && locus.end !== undefined
-          ? `${locus.chr}:${locus.start}-${locus.end}`
-          : locus.chr;
-      } else {
-        locusDisplay = JSON.stringify(locus);
-      }
-      return runCommand('goto_locus', { type: 'gotoLocus', locus, panel }, `Navigating to locus: ${locusDisplay}`);
     }
   );
 
