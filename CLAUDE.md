@@ -84,6 +84,8 @@ A command tool (one that sends one command to the pages) is a row of `COMMAND_TO
 
 ## Further docs
 
+- `CODING_STANDARDS.md` — judgement rules applied at code review (the mechanical ones are the tests and CI).
+- `docs/local-testing.md` — local relay + page, and driving the dev stack with `scripts/dev-check.mjs`.
 - `docs/design/ARCHITECTURE_V2.md` — the accepted design (protocol tables in §5, repo plan in §9).
 - `docs/adr/` — architecture decision records.
 - Prototype-era notes (`docs/mcp-notes/`, `docs/datasource-notes/`, `docs/development-notes/`) are on branch `prototype` only (`git show prototype:docs/…`); still accurate for the search pipeline and MCP tool reference, stale where they describe the Node server or the vendored viewer.

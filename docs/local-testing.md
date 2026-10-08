@@ -204,3 +204,28 @@ npm test                                                    # watch mode
 ```
 
 The server tests run the real Worker and Durable Objects locally, with no Cloudflare account.
+
+## Drive the dev stack from a script (no local relay needed)
+
+The Juicebot dev stack is the Worker at `juicebot-mcp-dev.3dg.io` and the page at
+`juicebot-dev.3dg.io` (CLAUDE.md names the deploy commands). The Claude Code juicebot plugin
+and Claude Desktop connectors point at the **production** Worker, whose rooms are a different
+Durable Object namespace, so they cannot drive a page on the dev site. `scripts/dev-check.mjs`
+talks to the dev Worker's `/mcp` directly:
+
+```bash
+ROOM=T$(tr -dc 'A-HJKMNP-TV-Z0-9' </dev/urandom | head -c9)   # a fresh throwaway room
+# open https://juicebot-dev.3dg.io/?room=$ROOM in one or two tabs, then:
+node scripts/dev-check.mjs $ROOM list_panels
+node scripts/dev-check.mjs $ROOM load_map '{"url":"https://hicfiles.s3.amazonaws.com/hiseq/gm12878/in-situ/combined.hic","name":"GM"}'
+node scripts/dev-check.mjs $ROOM load_map '{"url":"https://hicfiles.s3.amazonaws.com/hiseq/gm12878/in-situ/combined.hic","name":"GM2","panel":"new"}'
+```
+
+Always a fresh room, never one someone is working in: the room asks its first live page for
+the session on every join, and a probe that does not ack breaks that room. For a headless
+peer, `playwright-cli -s=<name> open "https://juicebot-dev.3dg.io/?room=$ROOM"` and count
+`.hic-root` elements after each call; the gene track draws nothing at whole-genome zoom, so
+a colour check needs a gene-dense locus first (`goto_locus` with `"panel":"all"`).
+
+A new command or sync event type needs the dev Worker redeployed even when no server file
+changed: the room validates types against the protocol catalogue bundled at deploy time.
