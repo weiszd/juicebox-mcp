@@ -1,0 +1,33 @@
+# PROTOTYPE, throwaway (branch proto/first-launch, ticket .scratch/onboarding/issues/13).
+# A separate Worker on its *.workers.dev address so the shared Juicebot dev stack is
+# not touched. The page at BROWSER_URL talks to the dev Worker's /ws, not this one,
+# so Juicebox opens but is not driven from here: this tests the card and the launch only.
+#   npx wrangler deploy -c wrangler.proto.toml      delete with: npx wrangler delete -c wrangler.proto.toml
+name = "juicebot-mcp-proto"
+main = "src/index.js"
+compatibility_date = "2024-12-01"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = true
+preview_urls = false
+
+[[durable_objects.bindings]]
+name = "WEBSOCKET_ROOM"
+class_name = "WebSocketRoom"
+
+[[durable_objects.bindings]]
+name = "MCP_SESSION"
+class_name = "McpSession"
+
+[[migrations]]
+tag = "v1"
+new_classes = ["WebSocketRoom"]
+
+[[migrations]]
+tag = "v2"
+new_classes = ["McpSession"]
+
+[vars]
+BROWSER_URL = "https://juicebot-dev.3dg.io/"
+TINYURL_DOMAIN = "t.3dg.io"
+TINYURL_ENDPOINT = "https://api.tinyurl.com/create"
+ALLOWED_ORIGINS = ["https://juicebot-dev.3dg.io"]

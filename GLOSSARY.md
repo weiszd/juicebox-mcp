@@ -22,6 +22,18 @@ _Avoid_: session, sessionId, channel
 A URL carrying `?room=`; opening it joins the room.
 _Avoid_: share URL, juicebox URL, connection URL
 
+**Join QR**:
+A QR code encoding a join link.
+_Avoid_: QR code (alone)
+
+**Onboarding link**:
+The one permanent URL a new user is given to begin onboarding.
+_Avoid_: install link, connector URL (that is the server's address)
+
+**Onboarding QR**:
+A QR code encoding the onboarding link, for print and slides.
+_Avoid_: QR code (alone)
+
 **Saved session**:
 The most recent session a page stored in its room; served to a late joiner when no peer is live.
 _Avoid_: auto-save, cache
@@ -31,6 +43,14 @@ _Avoid_: auto-save, cache
 **MCP client**:
 The LLM-side program (Claude Desktop, ChatGPT, Cursor, …) that calls tools.
 _Avoid_: client (alone), Claude
+
+**Connector**:
+The MCP server as it appears inside an MCP client once a user has added it.
+_Avoid_: plugin, extension, integration
+
+**Onboarding**:
+The path a new user takes from never having used the connector to having it installed in their MCP client.
+_Avoid_: setup, install (alone)
 
 **Page**:
 One web-browser tab hosting juicebox.js.

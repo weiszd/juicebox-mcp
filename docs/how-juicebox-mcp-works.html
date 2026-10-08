@@ -1,0 +1,426 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta charset="utf-8">
+<title>How Juicebox MCP Works</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&display=swap">
+<style>
+/* Layout: one 38rem reading column on the left, a margin for notes on the right, figures across both. */
+:root {
+  --bg: #f5f6f4;
+  --box: #ffffff;
+  --fg: #1b1d1c;
+  --muted: #636966;
+  --rule: #cdd2ce;
+  --accent: #b8231a;            /* the red of a contact map */
+  --serif: "Source Serif 4", "Iowan Old Style", Georgia, serif;
+  --sans: "IBM Plex Sans", "Helvetica Neue", Arial, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #151716; --box: #1e2120; --fg: #e5e7e4; --muted: #9aa19c; --rule: #3b403d; --accent: #ff7566;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #151716; --box: #1e2120; --fg: #e5e7e4; --muted: #9aa19c; --rule: #3b403d; --accent: #ff7566;
+  color-scheme: dark;
+}
+
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--serif);
+  font-size: 1.0625rem;
+  line-height: 1.6;
+}
+.page {
+  max-width: 62rem;
+  margin-inline: auto;
+  padding-inline: 20px;
+  padding-block: 3.5rem 5rem;
+}
+.page :is(h1, h2, p, ol, ul, pre, .tablewrap) { max-width: 38rem; }
+
+h1 {
+  font-family: var(--sans);
+  font-weight: 600;
+  font-size: 2rem;
+  line-height: 1.15;
+  letter-spacing: -0.01em;
+  margin: 0 0 0.75rem;
+  text-wrap: balance;
+}
+.lede {
+  font-size: 1.2rem;
+  line-height: 1.5;
+  color: var(--muted);
+  margin: 0 0 2.5rem;
+}
+h2 {
+  font-family: var(--sans);
+  font-weight: 600;
+  font-size: 1.0625rem;
+  margin: 3rem 0 0.75rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--fg);
+  text-wrap: balance;
+}
+p { margin: 0 0 1rem; }
+ol, ul { margin: 0 0 1rem; padding-left: 1.4rem; }
+li { margin-bottom: 0.4rem; }
+li::marker { font-family: var(--sans); font-size: 0.85em; color: var(--muted); }
+code {
+  font-family: var(--mono);
+  font-size: 0.84em;
+}
+
+/* Margin notes */
+.note {
+  font-family: var(--sans);
+  font-size: 0.8rem;
+  line-height: 1.45;
+  color: var(--muted);
+  max-width: 38rem;
+  margin: 0 0 1rem;
+}
+@media (min-width: 62rem) {
+  .note {
+    float: right;
+    clear: right;
+    width: 16rem;
+    margin: 0.35rem 0 1rem 2rem;
+  }
+}
+
+/* Figures */
+figure {
+  clear: both;
+  margin: 2rem 0 2rem;
+}
+.figwrap { overflow-x: auto; }
+svg.fig {
+  display: block;
+  width: 100%;
+  min-width: 40rem;
+  height: auto;
+  color: var(--fg);
+  font-family: var(--sans);
+}
+figcaption {
+  font-family: var(--sans);
+  font-size: 0.8rem;
+  line-height: 1.45;
+  color: var(--muted);
+  max-width: 38rem;
+  margin-top: 0.75rem;
+}
+figcaption b { color: var(--fg); font-weight: 600; }
+.fig text { fill: currentColor; font-size: 12.5px; }
+.fig .t-h { font-weight: 600; }
+.fig .t-s { font-size: 10.5px; fill: var(--muted); }
+.fig .t-m { font-family: var(--mono); font-size: 11px; }
+.fig .t-n { font-size: 11px; font-weight: 600; fill: var(--muted); }
+.fig .t-x { fill: var(--accent); }
+.fig .bx { fill: var(--box); stroke: currentColor; stroke-width: 1; }
+.fig .pane { fill: none; stroke: var(--rule); stroke-width: 1; }
+.fig .ln { stroke: currentColor; stroke-width: 1; fill: none; }
+.fig .lx { stroke: var(--accent); stroke-width: 1.5; fill: none; }
+.fig .ld { stroke-dasharray: 4 3; }
+.fig .life { stroke: var(--rule); stroke-width: 1; }
+.fig .ah { fill: currentColor; }
+.fig .ahx { fill: var(--accent); }
+
+/* Tables */
+.tablewrap { overflow-x: auto; margin: 1.25rem 0 1.5rem; }
+.tablewrap.wide { max-width: 50rem; }
+table {
+  border-collapse: collapse;
+  width: 100%;
+  font-family: var(--sans);
+  font-size: 0.85rem;
+  line-height: 1.4;
+}
+th, td {
+  text-align: left;
+  vertical-align: top;
+  padding: 0.5rem 1.1rem 0.5rem 0;
+  border-bottom: 1px solid var(--rule);
+}
+thead th {
+  font-weight: 600;
+  border-bottom: 1px solid var(--fg);
+}
+tbody th { font-weight: 600; white-space: nowrap; }
+tbody tr:last-child :is(th, td) { border-bottom: 0; }
+td code, th code { font-size: 0.92em; }
+td.n { font-weight: 600; color: var(--muted); width: 1.5rem; }
+.end {
+  font-family: var(--sans);
+  font-size: 0.8rem;
+  color: var(--muted);
+  margin-top: 3rem;
+}
+</style>
+</head>
+<body style="margin:0">
+
+<main class="page">
+
+<h1>How Juicebox MCP works</h1>
+<p class="lede">Four parts work together so that Claude can operate a Juicebox contact map. This document says what each part does and what passes between them.</p>
+
+<h2>The four parts</h2>
+
+<figure>
+  <div class="figwrap">
+  <svg class="fig" viewBox="0 0 860 316" role="img" aria-label="Claude sends tool calls to the MCP server. The MCP server sends commands to the Juicebox page. The Juicebox web server supplies the page's files.">
+    <defs>
+      <marker id="f1a" viewBox="0 0 8 8" refX="7.5" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0.5 L8 4 L0 7.5z" class="ah"/></marker>
+    </defs>
+
+    <rect class="bx" x="20" y="40" width="200" height="110"/>
+    <text class="t-h" x="120" y="84" text-anchor="middle">Claude</text>
+    <text class="t-s" x="120" y="104" text-anchor="middle">Desktop or web,</text>
+    <text class="t-s" x="120" y="119" text-anchor="middle">with the Juicebox connector</text>
+
+    <rect class="bx" x="330" y="40" width="200" height="110"/>
+    <text class="t-h" x="430" y="84" text-anchor="middle">MCP server</text>
+    <text class="t-s" x="430" y="104" text-anchor="middle">tools and rooms</text>
+    <text class="t-s t-m" x="430" y="122" text-anchor="middle">juicebot-mcp-dev.3dg.io</text>
+
+    <rect class="bx" x="640" y="40" width="200" height="110"/>
+    <text class="t-h" x="740" y="84" text-anchor="middle">Juicebox page</text>
+    <text class="t-s" x="740" y="104" text-anchor="middle">in Claude&#8217;s panel</text>
+    <text class="t-s" x="740" y="119" text-anchor="middle">or in a Chrome window</text>
+
+    <rect class="bx" x="640" y="226" width="200" height="74"/>
+    <text class="t-h" x="740" y="258" text-anchor="middle">Juicebox web server</text>
+    <text class="t-s t-m" x="740" y="278" text-anchor="middle">juicebot-dev.3dg.io</text>
+
+    <line class="ln" x1="220" y1="80" x2="329" y2="80" marker-end="url(#f1a)"/>
+    <text x="275" y="73" text-anchor="middle">tool calls</text>
+    <line class="ln" x1="330" y1="110" x2="221" y2="110" marker-end="url(#f1a)"/>
+    <text x="275" y="127" text-anchor="middle">results</text>
+
+    <line class="ln" x1="530" y1="80" x2="639" y2="80" marker-end="url(#f1a)"/>
+    <text x="585" y="73" text-anchor="middle">commands</text>
+    <line class="ln" x1="640" y1="110" x2="531" y2="110" marker-end="url(#f1a)"/>
+    <text x="585" y="127" text-anchor="middle">replies</text>
+
+    <line class="ln" x1="740" y1="226" x2="740" y2="151" marker-end="url(#f1a)"/>
+    <text x="752" y="192">page files</text>
+  </svg>
+  </div>
+  <figcaption><b>Figure 1.</b> The four parts and what passes between them. The addresses are those of the development setup.</figcaption>
+</figure>
+
+<div class="tablewrap wide">
+<table>
+  <thead><tr><th>Part</th><th>What it does</th><th>What it does not do</th></tr></thead>
+  <tbody>
+    <tr><th>Claude</th><td>Holds the conversation. Decides which tool to call and with what values.</td><td>Draw anything, or send commands to the page itself.</td></tr>
+    <tr><th>MCP server</th><td>Offers Claude 32 tools. Passes each tool call to the page as a command and returns the page&rsquo;s reply.</td><td>Serve the page, or handle any map data.</td></tr>
+    <tr><th>Juicebox web server</th><td>Delivers the files of the Juicebox page to a browser.</td><td>Take any part once the page has loaded.</td></tr>
+    <tr><th>Juicebox page</th><td>Draws the contact map and carries out the commands. Fetches map data itself, directly from the public data hosts.</td><td>Know anything about Claude.</td></tr>
+  </tbody>
+</table>
+</div>
+
+<aside class="note">The MCP server is a Cloudflare Worker. The Juicebox web server is a Cloudflare Pages site built from juicebox-web. They are deployed separately.</aside>
+
+<p>MCP, the Model Context Protocol, is a standard that lets Claude call functions offered by an outside server. Each function is called a tool. A <em>connector</em> is Claude&rsquo;s name for an MCP server that a user has added to Claude.</p>
+
+<h2>The connector</h2>
+
+<p>The user adds the connector once, in Claude&rsquo;s settings, by giving the address of the MCP server. In the development setup this is <code>https://juicebot-mcp-dev.3dg.io/mcp</code>.</p>
+
+<p>The connector belongs to the user&rsquo;s account, so one connector serves both Claude Desktop and Claude on the web. Claude&rsquo;s requests to the MCP server come from Anthropic&rsquo;s servers, not from the user&rsquo;s computer. The MCP server must therefore have a public address.</p>
+
+<p>Once the connector is switched on in a conversation, Claude can see the list of tools: <code>load_map</code>, <code>goto_locus</code>, <code>set_color_scale</code>, <code>load_track</code> and so on.</p>
+
+<h2>Where the page appears</h2>
+
+<p>The Juicebox page is an ordinary web page. It can be shown in one of two places.</p>
+
+<figure>
+  <div class="figwrap">
+  <svg class="fig" viewBox="0 0 860 250" role="img" aria-label="Two arrangements. A: the Juicebox page in the panel inside the Claude Desktop window, beside the conversation. B: the Juicebox page in a separate Chrome window next to the Claude window.">
+    <!-- A -->
+    <rect class="bx" x="20" y="14" width="390" height="196"/>
+    <line class="ln" x1="20" y1="36" x2="410" y2="36"/>
+    <text class="t-s" x="30" y="29">Claude Desktop</text>
+    <line class="ln" x1="200" y1="36" x2="200" y2="210"/>
+    <text x="110" y="128" text-anchor="middle">Conversation</text>
+    <rect class="pane" x="255" y="58" width="100" height="100"/>
+    <line class="lx" x1="255" y1="58" x2="355" y2="158"/>
+    <text x="305" y="184" text-anchor="middle">Juicebox page</text>
+    <text class="t-s" x="305" y="200" text-anchor="middle">in the panel</text>
+    <text class="t-h" x="20" y="236">A. Panel inside Claude Desktop</text>
+
+    <!-- B -->
+    <rect class="bx" x="470" y="14" width="160" height="196"/>
+    <line class="ln" x1="470" y1="36" x2="630" y2="36"/>
+    <text class="t-s" x="480" y="29">Claude, Desktop or web</text>
+    <text x="550" y="128" text-anchor="middle">Conversation</text>
+
+    <rect class="bx" x="660" y="14" width="180" height="196"/>
+    <line class="ln" x1="660" y1="36" x2="840" y2="36"/>
+    <text class="t-s" x="670" y="29">Chrome</text>
+    <rect class="pane" x="700" y="58" width="100" height="100"/>
+    <line class="lx" x1="700" y1="58" x2="800" y2="158"/>
+    <text x="750" y="184" text-anchor="middle">Juicebox page</text>
+    <text class="t-h" x="470" y="236">B. Separate browser window</text>
+  </svg>
+  </div>
+  <figcaption><b>Figure 2.</b> The two places the page can appear. The page is the same in both, and it connects to the MCP server in the same way.</figcaption>
+</figure>
+
+<aside class="note">Claude does not allow a connector to place another web site inside the conversation itself. That is why the page is shown in the panel or in a separate window, and not in the card.</aside>
+
+<p><b>A. The panel.</b> Claude Desktop has a built-in browser panel beside the conversation. Claude opens the page there itself. The conversation and the map sit side by side in one window.</p>
+
+<p><b>B. A separate window.</b> Claude on the web has no panel. Claude shows a card with an Open Juicebox button, and the button opens the page in a browser window. A Claude Desktop user can choose this too: the card offers a link for it.</p>
+
+<h2>From first request to first map</h2>
+
+<figure>
+  <div class="figwrap">
+  <svg class="fig" viewBox="0 0 880 376" role="img" aria-label="Sequence. Claude gets a join link from the MCP server. The link is opened. The page loads from the Juicebox web server and joins a room on the MCP server. A tool call then travels from Claude through the MCP server to the page, and the reply returns.">
+    <defs>
+      <marker id="f3a" viewBox="0 0 8 8" refX="7.5" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0.5 L8 4 L0 7.5z" class="ah"/></marker>
+      <marker id="f3x" viewBox="0 0 8 8" refX="7.5" refY="4" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0.5 L8 4 L0 7.5z" class="ahx"/></marker>
+    </defs>
+    <text class="t-h" x="90" y="38" text-anchor="middle">Claude</text>
+    <text class="t-h" x="350" y="38" text-anchor="middle">MCP server</text>
+    <text class="t-h" x="610" y="38" text-anchor="middle">Juicebox page</text>
+    <text class="t-h" x="810" y="38" text-anchor="middle">Juicebox web server</text>
+    <line class="life" x1="90" y1="52" x2="90" y2="364"/>
+    <line class="life" x1="350" y1="52" x2="350" y2="364"/>
+    <line class="life" x1="610" y1="52" x2="610" y2="364"/>
+    <line class="life" x1="810" y1="52" x2="810" y2="364"/>
+
+    <text class="t-n" x="10" y="84">1</text>
+    <line class="ln" x1="90" y1="80" x2="349" y2="80" marker-end="url(#f3a)"/>
+    <text class="t-m" x="220" y="74" text-anchor="middle">get_juicebox_url</text>
+    <line class="ln" x1="350" y1="106" x2="91" y2="106" marker-end="url(#f3a)"/>
+    <text x="220" y="100" text-anchor="middle">join link</text>
+
+    <text class="t-n" x="10" y="150">2</text>
+    <line class="ln ld" x1="90" y1="146" x2="609" y2="146" marker-end="url(#f3a)"/>
+    <text x="220" y="140" text-anchor="middle">the join link is opened</text>
+
+    <text class="t-n" x="10" y="190">3</text>
+    <line class="ln" x1="610" y1="186" x2="809" y2="186" marker-end="url(#f3a)"/>
+    <text x="710" y="180" text-anchor="middle">asks for the page</text>
+    <line class="ln" x1="810" y1="212" x2="611" y2="212" marker-end="url(#f3a)"/>
+    <text x="710" y="206" text-anchor="middle">page files</text>
+
+    <text class="t-n" x="10" y="256">4</text>
+    <line class="ln" x1="610" y1="252" x2="351" y2="252" marker-end="url(#f3a)"/>
+    <text x="480" y="246" text-anchor="middle">connects, joins the room</text>
+    <line class="ln" x1="350" y1="278" x2="609" y2="278" marker-end="url(#f3a)"/>
+    <text x="480" y="272" text-anchor="middle">joined</text>
+
+    <text class="t-n" x="10" y="322">5</text>
+    <line class="lx" x1="90" y1="318" x2="349" y2="318" marker-end="url(#f3x)"/>
+    <text class="t-m t-x" x="220" y="312" text-anchor="middle">load_map</text>
+    <line class="lx" x1="350" y1="318" x2="609" y2="318" marker-end="url(#f3x)"/>
+    <text class="t-x" x="480" y="312" text-anchor="middle">command</text>
+    <line class="ln" x1="610" y1="350" x2="351" y2="350" marker-end="url(#f3a)"/>
+    <text x="480" y="344" text-anchor="middle">reply</text>
+    <line class="ln" x1="350" y1="350" x2="91" y2="350" marker-end="url(#f3a)"/>
+    <text x="220" y="344" text-anchor="middle">result</text>
+  </svg>
+  </div>
+  <figcaption><b>Figure 3.</b> The sequence, with time running downward. Steps 1 to 4 happen once per conversation. Step 5, in red, repeats for every request that follows.</figcaption>
+</figure>
+
+<div class="tablewrap wide">
+<table>
+  <thead><tr><th></th><th>The user</th><th>What happens</th></tr></thead>
+  <tbody>
+    <tr><td class="n">1</td><td>Asks Claude to open Juicebox.</td><td>Claude calls the tool <code>get_juicebox_url</code>. The MCP server replies with a <em>join link</em>: the address of the Juicebox page with a room id attached, such as <code>https://juicebot-dev.3dg.io/?room=7KQ2M9XA4T</code>. Claude shows a card.</td></tr>
+    <tr><td class="n">2</td><td>In Claude Desktop, nothing; may be asked to allow the site. On the web, presses Open Juicebox.</td><td>The join link is opened, in the panel by Claude or in a browser window by the button.</td></tr>
+    <tr><td class="n">3</td><td>Sees the Juicebox page appear.</td><td>The browser fetches the page&rsquo;s files from the Juicebox web server.</td></tr>
+    <tr><td class="n">4</td><td>Nothing.</td><td>The page reads the room id from its own address, opens a connection to the MCP server and joins that room. The connection stays open.</td></tr>
+    <tr><td class="n">5</td><td>Asks for a map, a region, a colour, a track.</td><td>Claude calls a tool. The MCP server sends a command down the open connection. The page carries it out and replies. The MCP server returns the result to Claude.</td></tr>
+  </tbody>
+</table>
+</div>
+
+<aside class="note">The behaviour in steps 1 and 2 is the current prototype, on the branch <code>proto/first-launch</code>.</aside>
+
+<p>The room id is what ties a conversation to a page. The MCP server creates one when a conversation starts and puts it in the join link. The page hands it back when it connects. From then on the MCP server knows which page a tool call from that conversation is meant for.</p>
+
+<p>Each conversation has its own room. A page opened for one conversation does not respond to another.</p>
+
+<h2>One tool call</h2>
+
+<p>Step 5 is the working cycle. The MCP server does not draw and does not load data. It translates the tool call into a command, sends it, and waits up to ten seconds for the page to reply.</p>
+
+<div class="tablewrap">
+<table>
+  <thead><tr><th>What happens</th><th>What Claude is told</th></tr></thead>
+  <tbody>
+    <tr><td>The page replies that it worked</td><td>Done, with a short description</td></tr>
+    <tr><td>The page replies with an error</td><td>The page&rsquo;s error message</td></tr>
+    <tr><td>No reply within 10 seconds</td><td>&ldquo;Sent, unconfirmed&rdquo;</td></tr>
+    <tr><td>No page has joined the room</td><td>&ldquo;No page is connected to this room&rdquo;, with advice to open the join link</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>Claude turns what it is told into its answer to the user. The last row is the one a user meets most often: the page was never opened, or was closed.</p>
+
+<p>A few tools do not involve the page. The search tools look up maps in the ENCODE and 4DN catalogues and answer from the MCP server alone.</p>
+
+<h2>Inside the page</h2>
+
+<p>The page contains two things. The <em>viewer</em> is juicebox.js, which draws the map. The <em>remote</em> is a small library that holds the connection to the MCP server. When a command arrives, the remote makes the matching call on the viewer and sends back the reply.</p>
+
+<p>The viewer has no knowledge of Claude or of the MCP server. All of that is confined to the remote.</p>
+
+<h2>How the parts find each other</h2>
+
+<p>Four settings connect the parts. Each is an address held by one part that points at another.</p>
+
+<div class="tablewrap wide">
+<table>
+  <thead><tr><th>Setting</th><th>Held by</th><th>Points at</th><th>Used for</th></tr></thead>
+  <tbody>
+    <tr><td>Connector address</td><td>Claude</td><td>MCP server, <code>/mcp</code></td><td>Tool calls</td></tr>
+    <tr><td><code>BROWSER_URL</code></td><td>MCP server</td><td>Juicebox web server</td><td>Building the join link</td></tr>
+    <tr><td><code>VITE_WS_URL</code></td><td>Juicebox page</td><td>MCP server, <code>/ws</code></td><td>The page&rsquo;s connection</td></tr>
+    <tr><td><code>ALLOWED_ORIGINS</code></td><td>MCP server</td><td>Juicebox web server</td><td>Refusing connections from pages served anywhere else</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p><code>VITE_WS_URL</code> is fixed when the page is built. A page built for one MCP server cannot connect to another. An MCP server and a Juicebox web server are therefore deployed as a matched pair.</p>
+
+<h2>Where the code is</h2>
+
+<div class="tablewrap wide">
+<table>
+  <thead><tr><th>Part</th><th>Code</th></tr></thead>
+  <tbody>
+    <tr><td>MCP server: addresses, room ids</td><td><code>packages/server/src/index.js</code></td></tr>
+    <tr><td>MCP server: tools</td><td><code>packages/server/src/mcp/toolHandlers.js</code></td></tr>
+    <tr><td>MCP server: the card</td><td><code>packages/server/src/mcp/juiceboxView.js</code></td></tr>
+    <tr><td>MCP server: rooms</td><td><code>packages/server/src/durableObjects/WebSocketRoom.js</code></td></tr>
+    <tr><td>MCP server: settings</td><td><code>packages/server/wrangler.toml</code></td></tr>
+    <tr><td>Remote</td><td><code>packages/remote/src/</code></td></tr>
+    <tr><td>Juicebox page and web server</td><td>juicebox-web, a separate repository</td></tr>
+    <tr><td>Viewer</td><td>juicebox.js, a separate repository</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p class="end">The full design is <code>docs/design/ARCHITECTURE_V2.md</code>. Running all four parts on one machine is described in <code>docs/local-testing.md</code>.</p>
+
+</main>
+</body>
+</html>
