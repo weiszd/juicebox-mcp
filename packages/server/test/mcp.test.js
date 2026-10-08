@@ -131,16 +131,20 @@ describe('initialize', () => {
 });
 
 describe('tools/list', () => {
-  it('lists the prototype tools with unchanged names and input schemas, plus join_room', async () => {
+  // The client contract (ticket 36): every tool's name, title, description and input
+  // schema, as served when the fixture was recorded. Regenerate the fixture only when
+  // the contract changes on purpose.
+  it('lists every tool with the recorded name, title, description and input schema', async () => {
     const res = await rpc('tools/list', {}, { 'mcp-session-id': await newSession() });
     const { tools } = (await res.json()).result;
 
-    expect(tools).toHaveLength(32);
-    const byName = Object.fromEntries(tools.map((t) => [t.name, t.inputSchema]));
-    for (const { name, inputSchema } of prototypeTools) {
-      expect(byName[name], name).toEqual(inputSchema);
+    expect(tools.map((t) => t.name).sort()).toEqual(prototypeTools.map((t) => t.name).sort());
+    const byName = Object.fromEntries(tools.map((t) => [t.name, t]));
+    for (const { name, title, description, inputSchema } of prototypeTools) {
+      const { title: servedTitle, description: servedDescription, inputSchema: servedSchema } = byName[name];
+      expect({ title: servedTitle, description: servedDescription, inputSchema: servedSchema }, name)
+        .toEqual({ title, description, inputSchema });
     }
-    expect(byName.join_room.required).toEqual(['room']);
   });
 
   it('search_maps is deliberately renamed search_map_catalogs (ticket 24): same schema, old name gone', async () => {
