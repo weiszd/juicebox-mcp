@@ -207,6 +207,24 @@ describe('panels module: tracks', () => {
     expect(findTrack(browser, 'LOOPS')).toEqual({ track2D: loops });
   });
 
+  it('an exact-case name wins over a case-insensitive match earlier in the list', () => {
+    const { browser } = panelWithTracks();
+    const upper = fakeTrackPair('CTCF', {}, browser);
+    browser.trackPairs.push(upper);
+
+    expect(findTrack(browser, 'CTCF')).toEqual({ trackPair: upper });
+  });
+
+  it('by name only, an all-digit name is the track with that name, not a position', () => {
+    const { browser, h3k27ac } = panelWithTracks();
+    const two = fakeTrackPair('2', {}, browser);
+    browser.trackPairs.push(two);
+
+    expect(findTrack(browser, '2', { byName: true })).toEqual({ trackPair: two });
+    expect(findTrack(browser, '2')).toEqual({ trackPair: h3k27ac });
+    expect(() => findTrack(browser, '3', { byName: true })).toThrow('Track not found: 3');
+  });
+
   it.each([4, 'rad21'])('track %s, which the panel does not have, is refused', (track) => {
     const { browser } = panelWithTracks();
 

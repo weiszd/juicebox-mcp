@@ -17,6 +17,9 @@ import {
 const LOCUS_THROTTLE_MS = 150;
 const LOCUS_DEBOUNCE_MS = 100;
 
+// A peer's sync event names a track, never numbers it: a name of digits is still a name.
+const BY_NAME = { byName: true };
+
 /**
  * Send a sync event for each change made on this page, and apply peers' sync
  * events to it. Design §5.3.
@@ -200,14 +203,14 @@ export function observe(hic, container, send) {
       // Resolves once every track has loaded, so their load events fall inside the guard.
       if (toLoad.length) return browser.loadTracks(toLoad);
     }),
-    [SyncEventType.TRACK_REMOVE]: onPanel((browser, { track }) => removeTrack(browser, track)),
-    [SyncEventType.TRACK_COLOR_CHANGE]: onPanel((browser, { track, colorString }) => setTrackColor(browser, track, colorString)),
-    [SyncEventType.TRACK_NAME_CHANGE]: onPanel((browser, { track, name }) => setTrackName(browser, track, name)),
+    [SyncEventType.TRACK_REMOVE]: onPanel((browser, { track }) => removeTrack(browser, track, BY_NAME)),
+    [SyncEventType.TRACK_COLOR_CHANGE]: onPanel((browser, { track, colorString }) => setTrackColor(browser, track, colorString, BY_NAME)),
+    [SyncEventType.TRACK_NAME_CHANGE]: onPanel((browser, { track, name }) => setTrackName(browser, track, name, BY_NAME)),
     [SyncEventType.TRACK_DATA_RANGE_CHANGE]: onPanel((browser, { track, min, max }) =>
-      setTrackDataRange(browser, track, min, max),
+      setTrackDataRange(browser, track, min, max, BY_NAME),
     ),
-    [SyncEventType.TRACK_AUTOSCALE_CHANGE]: onPanel((browser, { track, enabled }) => setTrackAutoscale(browser, track, enabled)),
-    [SyncEventType.TRACK_LOG_SCALE_CHANGE]: onPanel((browser, { track, enabled }) => setTrackLogScale(browser, track, enabled)),
+    [SyncEventType.TRACK_AUTOSCALE_CHANGE]: onPanel((browser, { track, enabled }) => setTrackAutoscale(browser, track, enabled, BY_NAME)),
+    [SyncEventType.TRACK_LOG_SCALE_CHANGE]: onPanel((browser, { track, enabled }) => setTrackLogScale(browser, track, enabled, BY_NAME)),
   };
 
   /** A track pair's or a 2D track's change; peers name the track as they last heard it. */

@@ -365,6 +365,18 @@ describe('sync events: applying a peer’s sync event', () => {
     expect(trackPair.setColor).toHaveBeenCalledWith('red');
   });
 
+  it('a track renamed to digits is found by that name, not as a position', async () => {
+    const hic = fakeHic();
+    const first = hic.addTrack({ url: 'https://tracks.example/ctcf.bw', name: 'CTCF' });
+    const second = hic.addTrack({ url: 'https://tracks.example/k27.bw', name: 'H3K27ac' });
+    const { socket } = await joined(hic);
+    socket.receive({ type: 'syncEvent', syncType: 'trackNameChange', track: 'CTCF', name: '2' });
+    socket.receive({ type: 'syncEvent', syncType: 'trackColorChange', track: '2', colorString: 'red' });
+    await settle();
+    expect(first.setColor).toHaveBeenCalledWith('red');
+    expect(second.setColor).not.toHaveBeenCalled();
+  });
+
   it('an unknown track is dropped, and later sync events still apply', async () => {
     const hic = fakeHic();
     const { socket } = await joined(hic);

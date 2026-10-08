@@ -5,7 +5,8 @@
  * sync-event observer (observe.js) both call it, so the two paths cannot disagree.
  *
  * Commands address panels by a spec (resolvePanels, resolvePanel); sync events by
- * position only (panelAt), over the same lookup.
+ * position only (panelAt), over the same lookup. Tracks likewise: commands by number or
+ * name, sync events by name only (`{byName: true}`), over the one findTrack.
  */
 
 /**
@@ -101,57 +102,64 @@ export const datasetLabel = ({ dataset }) => (dataset ? `${dataset.name}, ${data
 /**
  * The track a command or a peer's sync event names on a panel, as `{trackPair}` or
  * `{track2D}`: a 1-based number over the track pairs then the 2D tracks (the order
- * list_tracks numbers them in), or else a name, matched case-insensitively, a track pair
- * before a 2D track. Throws for a track the panel does not have.
+ * list_tracks numbers them in), or else a name, a track pair before a 2D track, and in
+ * each an exact match before a case-insensitive one. With `byName` (a peer's sync event,
+ * which always names the track) a string of digits is a name too. Throws for a track the
+ * panel does not have.
  */
-export function findTrack({ trackPairs, tracks2D }, track) {
+export function findTrack({ trackPairs, tracks2D }, track, { byName = false } = {}) {
   const id = String(track).trim();
   let trackPair, track2D;
-  if (isTrackNumber(id)) {
+  if (!byName && isTrackNumber(id)) {
     const i = Number(id) - 1;
     trackPair = trackPairs[i];
     if (!trackPair && i >= trackPairs.length) track2D = tracks2D[i - trackPairs.length];
   } else {
-    const named = (t) => t.name?.toLowerCase() === id.toLowerCase();
-    trackPair = trackPairs.find((tp) => named(tp.track));
-    if (!trackPair) track2D = tracks2D.find(named);
+    trackPair = findNamed(trackPairs, (tp) => tp.track.name, id);
+    if (!trackPair) track2D = findNamed(tracks2D, (t) => t.name, id);
   }
   if (!trackPair && !track2D) throw new Error(`Track not found: ${track}`);
   return trackPair ? { trackPair } : { track2D };
 }
 
-export function removeTrack(browser, track) {
-  const { trackPair, track2D } = findTrack(browser, track);
+/** The item whose name is `id`, else the first whose name is `id` ignoring case. */
+function findNamed(items, nameOf, id) {
+  const lower = id.toLowerCase();
+  return items.find((t) => nameOf(t) === id) ?? items.find((t) => nameOf(t)?.toLowerCase() === lower);
+}
+
+export function removeTrack(browser, track, opts) {
+  const { trackPair, track2D } = findTrack(browser, track, opts);
   if (track2D) browser.removeTrack2D(track2D);
   else browser.layoutController.removeTrackXYPair(trackPair);
 }
 
 /** `color` an rgb or CSS colour string; none resets the track to its default (a 2D track's features' own colours). */
-export function setTrackColor(browser, track, color) {
-  const { trackPair, track2D } = findTrack(browser, track);
+export function setTrackColor(browser, track, color, opts) {
+  const { trackPair, track2D } = findTrack(browser, track, opts);
   if (track2D) browser.setTrack2DColor(track2D, color);
   else trackPair.setColor(color);
 }
 
-export function setTrackName(browser, track, name) {
-  const { trackPair, track2D } = findTrack(browser, track);
+export function setTrackName(browser, track, name, opts) {
+  const { trackPair, track2D } = findTrack(browser, track, opts);
   if (track2D) browser.setTrack2DName(track2D, name);
   // What the track menu's rename writes; igv's name setter relabels the row, which posts the change event once.
   else trackPair.track.name = name;
 }
 
-export const setTrackDataRange = (browser, track, min, max) =>
-  trackPairFor(browser, track, 'setTrackDataRange').setDataRange(min, max);
+export const setTrackDataRange = (browser, track, min, max, opts) =>
+  trackPairFor(browser, track, 'setTrackDataRange', opts).setDataRange(min, max);
 
-export const setTrackAutoscale = (browser, track, enabled) =>
-  trackPairFor(browser, track, 'setTrackAutoscale').setAutoscale(enabled);
+export const setTrackAutoscale = (browser, track, enabled, opts) =>
+  trackPairFor(browser, track, 'setTrackAutoscale', opts).setAutoscale(enabled);
 
-export const setTrackLogScale = (browser, track, enabled) =>
-  trackPairFor(browser, track, 'setTrackLogScale').setLogScale(enabled);
+export const setTrackLogScale = (browser, track, enabled, opts) =>
+  trackPairFor(browser, track, 'setTrackLogScale', opts).setLogScale(enabled);
 
 /** The track pair `track` names; throws for a 2D track, which has no data range or scale (`op`). */
-function trackPairFor(browser, track, op) {
-  const { trackPair } = findTrack(browser, track);
+function trackPairFor(browser, track, op, opts) {
+  const { trackPair } = findTrack(browser, track, opts);
   if (!trackPair) throw new Error(`Track ${track} is a 2D track; ${op} does not apply to 2D tracks`);
   return trackPair;
 }
