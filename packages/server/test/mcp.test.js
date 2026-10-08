@@ -273,6 +273,55 @@ describe('command tools: what the page receives (ticket 36)', () => {
   });
 });
 
+describe('command tools ⇄ CommandType (ticket 37)', () => {
+  /** Arguments for a JSON schema: its required properties, each with a value it accepts. */
+  function sample(schema) {
+    if (schema.enum) return schema.enum[0];
+    if (schema.anyOf) return sample(schema.anyOf[0]);
+    if (schema.type === 'object') {
+      return Object.fromEntries((schema.required ?? []).map((key) => [key, sample(schema.properties[key])]));
+    }
+    if (schema.pattern === '^#[0-9A-Fa-f]{6}$') return '#ff0000';
+    return { string: schema.format === 'uri' ? 'https://example.org/a.hic' : 'chr1', number: 1, integer: 1, boolean: true }[schema.type];
+  }
+  // load_session's arguments are all optional, but it sends nothing without a session.
+  const argumentsFor = { load_session: { sessionData: '{"browsers":[]}' } };
+
+  it('every non-request CommandType is sent by exactly one tool, and every tool sends only CommandTypes', async () => {
+    const session = await newSession();
+    const page = await pageIn(session);
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async () => new Response('')); // the search tools' catalogs and portal
+
+    // The page acks every command; `current` is the tool being called, the calls one at a time.
+    let current;
+    const sent = []; // [tool, command type]
+    (async () => {
+      for (;;) {
+        const msg = await page.next();
+        if (typeof msg.requestId !== 'string') continue;
+        sent.push([current, msg.type]);
+        page.send({ type: MessageType.ACK, requestId: msg.requestId, ok: true });
+      }
+    })();
+
+    const { tools } = (await (await rpc('tools/list', {}, { 'mcp-session-id': session })).json()).result;
+    for (const { name, inputSchema } of tools) {
+      current = name;
+      await callTool(session, name, argumentsFor[name] ?? sample(inputSchema));
+    }
+
+    const commandTypes = Object.values(CommandType);
+    const requestTypes = Object.entries(CommandType).filter(([key]) => key.startsWith('GET_')).map(([, type]) => type);
+    for (const [tool, type] of sent) expect(commandTypes, `${tool} sent ${type}`).toContain(type);
+    const toolsByType = {};
+    for (const [tool, type] of sent) {
+      if (!requestTypes.includes(type)) (toolsByType[type] ??= new Set()).add(tool);
+    }
+    expect(Object.keys(toolsByType).sort()).toEqual(commandTypes.filter((t) => !requestTypes.includes(t)).sort());
+    for (const [type, senders] of Object.entries(toolsByType)) expect([...senders], type).toHaveLength(1);
+  });
+});
+
 describe('commands to several pages', () => {
   it('fans out to every page in the room; the first ack decides', async () => {
     const session = await newSession();
