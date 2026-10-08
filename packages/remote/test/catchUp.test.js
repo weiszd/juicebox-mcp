@@ -1,103 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { deflateRawSync } from 'node:zlib';
 import { attachRemote } from '../src/attachRemote.js';
-
-// Minimal stand-in for the platform WebSocket: the test drives open/message/drop.
-class FakeSocket {
-  constructor(url) {
-    this.url = url;
-    this.sent = [];
-    this.readyState = 0;
-    FakeSocket.instances.push(this);
-  }
-  send(data) {
-    this.sent.push(JSON.parse(data));
-  }
-  close() {
-    this.readyState = 3;
-    this.onclose?.({ code: 1000, reason: '', wasClean: true });
-  }
-  open() {
-    this.readyState = 1;
-    this.onopen?.({});
-  }
-  receive(msg) {
-    this.onmessage?.({ data: JSON.stringify(msg) });
-  }
-  drop() {
-    this.readyState = 3;
-    this.onclose?.({ code: 1006, reason: '', wasClean: false });
-  }
-}
-FakeSocket.instances = [];
-
-function fakeBus() {
-  const subscribers = {};
-  return {
-    subscribe(type, fn) {
-      (subscribers[type] ??= []).push(fn);
-    },
-    unsubscribe(type, fn) {
-      subscribers[type] = (subscribers[type] ?? []).filter((f) => f !== fn);
-    },
-    post(type, data) {
-      for (const fn of [...(subscribers[type] ?? [])]) fn({ type, data });
-    },
-  };
-}
-
-// A browser whose coordinator callbacks a test can fire, as juicebox.js's announce changes.
-function fakeBrowser(dataset) {
-  const subscribers = {};
-  const browser = {
-    dataset,
-    coordinator: {
-      addCallback(name, fn) {
-        (subscribers[name] ??= []).push(fn);
-        return () => subscribers[name].splice(subscribers[name].indexOf(fn), 1);
-      },
-      fire(name, payload) {
-        for (const fn of [...(subscribers[name] ?? [])]) fn({ ...payload, browser });
-      },
-    },
-    getSyncState: () => ({ chr1Name: 'chr1', chr2Name: 'chr1', binSize: 5000, binX: 1, binY: 1 }),
-    setNormalization: vi.fn(),
-  };
-  return browser;
-}
-
-/** What hic.compressedSession() writes: `session=blob:` and the url-safe base64 of the raw-deflated JSON. */
-const compress = (session) =>
-  'session=blob:' +
-  deflateRawSync(JSON.stringify(session)).toString('base64').replace(/\+/g, '.').replace(/\//g, '_').replace(/=/g, '-');
+import { FakeSocket, fakeHic, compress, MAP_A } from './fakeJuicebox.js';
 
 const sessionOf = (url) => ({ browsers: [{ url, name: url }] });
-const pageSession = sessionOf('https://maps.example/page.hic');
+const pageSession = { browsers: [MAP_A] }; // what fakeHic()'s page shows
 const roomSession = sessionOf('https://maps.example/room.hic');
-
-// A juicebox.js namespace whose restoreSession replaces the browser, as the real one
-// does: BrowserSelect names the new one, and its map load and locus announce themselves.
-function fakeHic({ mapLoaded = true } = {}) {
-  const bus = fakeBus();
-  const hic = {
-    EventBus: { globalBus: bus },
-    bus,
-    current: fakeBrowser(mapLoaded ? { url: pageSession.browsers[0].url, name: 'page' } : undefined),
-    session: mapLoaded ? pageSession : { browsers: [] },
-    getCurrentBrowser: () => hic.current,
-    getAllBrowsers: () => (hic.current ? [hic.current] : []),
-    compressedSession: vi.fn(() => compress(hic.session)),
-    restoreSession: vi.fn(async (container, session) => {
-      await Promise.resolve();
-      hic.session = session;
-      hic.current = fakeBrowser({ url: session.browsers[0].url, name: session.browsers[0].name });
-      bus.post('BrowserSelect', hic.current);
-      hic.current.coordinator.fire('onMapLoaded', { dataset: hic.current.dataset });
-      hic.current.coordinator.fire('onLocusChange', { state: {}, changes: {} });
-    }),
-  };
-  return hic;
-}
 
 const container = {};
 
@@ -231,7 +138,7 @@ describe('saved session: the page saves its compressed session when it changed',
   });
 
   it('a page with no map saves nothing', async () => {
-    const hic = fakeHic({ mapLoaded: false });
+    const hic = fakeHic({ panels: [null] });
     const { socket } = await joined(hic);
     socket.receive({ type: 'peerSessionData', error: 'No session available' });
     await settle();

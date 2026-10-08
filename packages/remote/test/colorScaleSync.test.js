@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { attachRemote } from '../src/attachRemote.js';
+import { fakeHic } from './fakeJuicebox.js';
 
 // A room as the server keeps one: sync events go to every other page, and a joiner's
 // requestSessionFromPeer is answered with the first other page's getSession result.
@@ -57,94 +58,6 @@ function fakeRoom() {
   };
 }
 
-const tick = () => Promise.resolve();
-
-// juicebox.js's colour scale as far as a display-mode switch goes. A and B draw with one
-// ColorScale whose threshold is kept per mode (ImageTileSource.thresholdCache); a mode with
-// none yet gets the page's auto threshold, which depends on its viewport, so it differs
-// between pages. setDisplayMode's render announces the new mode's threshold through
-// onColorScaleChange, and only then does onDisplayModeChange fire (HICBrowser.setDisplayMode).
-function fakeBrowser(autoThreshold, { displayMode, threshold }) {
-  const subscribers = {};
-  const fire = (name, payload) => {
-    for (const fn of [...(subscribers[name] ?? [])]) fn({ ...payload, browser });
-  };
-  const thresholds = { [displayMode]: threshold };
-  const colorScale = {
-    threshold,
-    getThreshold: () => colorScale.threshold,
-    getColorComponents: () => ({ r: 255, g: 0, b: 0 }),
-    setColorComponents: () => {},
-  };
-
-  // The tile source's #ensureColorScale.
-  async function render() {
-    await tick();
-    const mode = browser.displayMode;
-    if (thresholds[mode] === undefined) thresholds[mode] = autoThreshold[mode];
-    if (colorScale.threshold === thresholds[mode]) return;
-    colorScale.threshold = thresholds[mode];
-    fire('onColorScaleChange', { colorScale });
-  }
-
-  const browser = {
-    dataset: { url: 'https://maps.example/a.hic', name: 'A' },
-    displayMode,
-    coordinator: {
-      addCallback(name, fn) {
-        (subscribers[name] ??= []).push(fn);
-        return () => subscribers[name].splice(subscribers[name].indexOf(fn), 1);
-      },
-    },
-    getSyncState: () => ({ chr1Name: 'chr1', chr2Name: 'chr1', binSize: 5000, binX: 1, binY: 1 }),
-    getDisplayMode: () => browser.displayMode,
-    getColorScale: () => colorScale,
-    setDisplayMode: vi.fn(async (mode) => {
-      browser.displayMode = mode;
-      await render();
-      fire('onDisplayModeChange', { mode });
-    }),
-    setColorScaleThreshold: (t) => {
-      colorScale.threshold = thresholds[browser.displayMode] = t;
-      fire('onColorScaleChange', { colorScale });
-      render(); // not awaited, as juicebox.js's is not
-    },
-    contactMatrixView: {
-      setColorScale: (scale) => (thresholds[browser.displayMode] = scale.threshold),
-    },
-  };
-  return browser;
-}
-
-/** A page's juicebox.js namespace: one browser, a session of its mode and threshold. */
-function fakeHic(autoThreshold) {
-  const subscribers = {};
-  const bus = {
-    subscribe: (type, fn) => (subscribers[type] ??= []).push(fn),
-    unsubscribe: (type, fn) => (subscribers[type] = (subscribers[type] ?? []).filter((f) => f !== fn)),
-    post: (type, data) => (subscribers[type] ?? []).forEach((fn) => fn({ type, data })),
-  };
-  const hic = {
-    EventBus: { globalBus: bus },
-    current: fakeBrowser(autoThreshold, { displayMode: 'A', threshold: autoThreshold.A }),
-    getCurrentBrowser: () => hic.current,
-    getAllBrowsers: () => [hic.current],
-    toJSON: () => {
-      const { dataset, displayMode } = hic.current;
-      const threshold = hic.current.getColorScale().getThreshold();
-      return { browsers: [{ url: dataset.url, name: dataset.name, displayMode, threshold }] };
-    },
-    compressedSession: () => JSON.stringify(hic.toJSON()),
-    restoreSession: vi.fn(async (container, session) => {
-      await tick();
-      const [{ displayMode, threshold }] = session.browsers;
-      hic.current = fakeBrowser(autoThreshold, { displayMode, threshold });
-      bus.post('BrowserSelect', hic.current);
-    }),
-  };
-  return hic;
-}
-
 /** Let every hop and queued apply finish. */
 async function settle() {
   for (let i = 0; i < 200; i++) await Promise.resolve();
@@ -173,8 +86,8 @@ afterEach(() => {
 describe('colour scale across a display-mode switch', () => {
   it('the peer ends each switch on the sender’s threshold for the new mode', async () => {
     const room = fakeRoom();
-    const sender = fakeHic(senderAutoThresholds);
-    const peer = fakeHic(peerAutoThresholds);
+    const sender = fakeHic({ autoThreshold: senderAutoThresholds });
+    const peer = fakeHic({ autoThreshold: peerAutoThresholds });
     await join(room, sender);
     await join(room, peer);
 
@@ -189,8 +102,8 @@ describe('colour scale across a display-mode switch', () => {
 
   it('applying them sends nothing back, not even the auto threshold the peer’s own switch computes', async () => {
     const room = fakeRoom();
-    const sender = fakeHic(senderAutoThresholds);
-    const peer = fakeHic(peerAutoThresholds);
+    const sender = fakeHic({ autoThreshold: senderAutoThresholds });
+    const peer = fakeHic({ autoThreshold: peerAutoThresholds });
     await join(room, sender);
     const { socket: peerSocket } = await join(room, peer);
 
@@ -203,8 +116,8 @@ describe('colour scale across a display-mode switch', () => {
 
   it('the peer switches once per switch of the sender’s', async () => {
     const room = fakeRoom();
-    const sender = fakeHic(senderAutoThresholds);
-    const peer = fakeHic(peerAutoThresholds);
+    const sender = fakeHic({ autoThreshold: senderAutoThresholds });
+    const peer = fakeHic({ autoThreshold: peerAutoThresholds });
     await join(room, sender);
     await join(room, peer);
 
@@ -215,8 +128,8 @@ describe('colour scale across a display-mode switch', () => {
 
   it('a late joiner catching up from that peer gets the sender’s threshold', async () => {
     const room = fakeRoom();
-    const sender = fakeHic(senderAutoThresholds);
-    const peer = fakeHic(peerAutoThresholds);
+    const sender = fakeHic({ autoThreshold: senderAutoThresholds });
+    const peer = fakeHic({ autoThreshold: peerAutoThresholds });
     const { remote: senderRemote } = await join(room, sender);
     await join(room, peer);
     await sender.current.setDisplayMode('B');
@@ -225,7 +138,7 @@ describe('colour scale across a display-mode switch', () => {
     await settle();
 
     senderRemote.detach(); // the peer is the room's only live page
-    const lateJoiner = fakeHic({ A: 9.9, B: 9.9 });
+    const lateJoiner = fakeHic({ autoThreshold: { A: 9.9, B: 9.9 } });
     await join(room, lateJoiner);
     expect(lateJoiner.restoreSession).toHaveBeenCalled();
     expect(viewOf(lateJoiner)).toEqual({ displayMode: 'A', threshold: 21.48 });

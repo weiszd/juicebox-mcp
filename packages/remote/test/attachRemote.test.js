@@ -2,123 +2,7 @@
 // @vitest-environment-options {"url": "https://juicebox.example/app/?x=1"}
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { attachRemote, Status } from '../src/attachRemote.js';
-
-// Minimal stand-in for the platform WebSocket: the test drives open/message/close.
-class FakeSocket {
-  constructor(url) {
-    this.url = url;
-    this.sent = [];
-    this.closed = false;
-    this.readyState = 0;
-    this.onopen = null;
-    this.onmessage = null;
-    this.onclose = null;
-    this.onerror = null;
-    FakeSocket.instances.push(this);
-  }
-  send(data) {
-    this.sent.push(JSON.parse(data));
-  }
-  close() {
-    this.closed = true;
-    this.readyState = 3;
-    this.onclose?.({ code: 1000, reason: '', wasClean: true });
-  }
-  // Test helpers (server side of the wire)
-  open() {
-    this.readyState = 1;
-    this.onopen?.({});
-  }
-  receive(msg) {
-    this.onmessage?.({ data: JSON.stringify(msg) });
-  }
-  drop() {
-    this.readyState = 3;
-    this.onclose?.({ code: 1006, reason: '', wasClean: false });
-  }
-}
-FakeSocket.instances = [];
-
-// Stand-in for the juicebox.js namespace: one current browser whose public
-// surface members are spies. `mapLoaded: false` models a page with no map yet.
-function fakeHic({ mapLoaded = true, genomeId, trackPairs = [], tracks2D = [] } = {}) {
-  const colorScale = {
-    threshold: 2000,
-    getThreshold() {
-      return this.threshold;
-    },
-    setColorComponents: vi.fn(),
-  };
-  const browser = {
-    dataset: mapLoaded ? { url: 'https://maps.example/a.hic', ...(genomeId ? { genomeId } : {}) } : undefined,
-    controlDataset: undefined,
-    coordinator: { addCallback: () => () => {} }, // sync events are covered in syncEvents.test.js
-    loadHicFile: vi.fn(async (config) => {
-      browser.dataset = { url: config.url };
-    }),
-    loadHicControlFile: vi.fn(async (config) => {
-      browser.controlDataset = { url: config.url };
-    }),
-    parseGotoInput: vi.fn(async () => {}),
-    zoomAndCenter: vi.fn(async () => {}),
-    getColorScale: vi.fn(() => colorScale),
-    setColorScaleThreshold: vi.fn(),
-    setNormalization: vi.fn(),
-    setDisplayMode: vi.fn(async () => {}),
-    getDisplayMode: vi.fn(() => 'A'),
-    contactMatrixView: {
-      setColorScale: vi.fn(),
-      setBackgroundColor: vi.fn(),
-      viewportElement: { clientWidth: 800, clientHeight: 600 },
-    },
-    trackPairs,
-    tracks2D,
-    loadTracks: vi.fn(() => new Promise(() => {})), // a track load that never finishes
-    layoutController: { removeTrackXYPair: vi.fn() },
-    removeTrack2D: vi.fn(),
-    setTrack2DColor: vi.fn(),
-    setTrack2DName: vi.fn((track2D, name) => (track2D.name = name)),
-  };
-  return {
-    EventBus: { globalBus: { subscribe() {}, unsubscribe() {} } },
-    getCurrentBrowser: vi.fn(() => browser),
-    getAllBrowsers: vi.fn(() => [browser]),
-    restoreSession: vi.fn(async () => {}),
-    toJSON: vi.fn(() => ({ browsers: [{ url: 'https://maps.example/a.hic', tracks: [] }] })),
-    compressedSession: vi.fn(() => 'session=blob:abc123'),
-    browser,
-    colorScale,
-  };
-}
-
-/**
- * A 1D track pair: `track` carries the look, the setters are spies. Setting
- * `track.name` relabels the row, as igv's TrackBase setter does.
- */
-function fakeTrackPair(name, look = {}) {
-  const trackPair = {
-    track: {
-      _name: name,
-      get name() {
-        return this._name;
-      },
-      set name(n) {
-        this._name = n;
-        trackPair.setTrackLabelName(n);
-      },
-      config: { url: `https://tracks.example/${name}.bw` },
-      ...look,
-    },
-    setColor: vi.fn(),
-    setTrackLabelName: vi.fn(),
-    setDataRange: vi.fn(),
-    setAutoscale: vi.fn(),
-    setLogScale: vi.fn(),
-  };
-  return trackPair;
-}
-
-const fakeTrack2D = (name, color) => ({ name, color, config: { url: `https://tracks.example/${name}.bedpe` } });
+import { FakeSocket, fakeHic, fakeTrackPair, fakeTrack2D, MAP_A } from './fakeJuicebox.js';
 
 const hic = fakeHic();
 const container = {};
@@ -333,26 +217,26 @@ describe('attachRemote: arguments', () => {
   });
 });
 
-// How a command's ack names the fake's one panel, whose dataset has no name or genome.
-const PANEL_1 = 'panel 1 (undefined, undefined)';
+// How a command's ack names the fake's one panel, whose dataset (MAP_A) has no genome.
+const PANEL_1 = 'panel 1 (A, undefined)';
 
 describe('attachRemote: view commands', () => {
   it('gotoLocus calls parseGotoInput with the locus and acks ok', async () => {
     const fake = fakeHic();
     const { send } = await joinedWith(fake);
     const ack = await send({ type: 'gotoLocus', requestId: 'q1', locus: 'chr1:10mb-20mb' });
-    expect(fake.browser.parseGotoInput).toHaveBeenCalledWith('chr1:10mb-20mb');
+    expect(fake.current.parseGotoInput).toHaveBeenCalledWith('chr1:10mb-20mb');
     expect(ack).toEqual({ type: 'ack', requestId: 'q1', ok: true, result: `${PANEL_1}: ok` });
   });
 });
 
 describe('attachRemote: command failures', () => {
   it('a view command before any map is loaded acks ok:false without calling the surface', async () => {
-    const fake = fakeHic({ mapLoaded: false });
+    const fake = fakeHic({ panels: [null] });
     const { send } = await joinedWith(fake);
     const ack = await send({ type: 'gotoLocus', requestId: 'q2', locus: 'chr1' });
     expect(ack).toEqual({ type: 'ack', requestId: 'q2', ok: false, error: 'panel 1 (no map): No map loaded' });
-    expect(fake.browser.parseGotoInput).not.toHaveBeenCalled();
+    expect(fake.current.parseGotoInput).not.toHaveBeenCalled();
   });
 
   it('an unknown command type acks ok:false naming the type', async () => {
@@ -364,7 +248,7 @@ describe('attachRemote: command failures', () => {
 
   it('a surface call that rejects acks ok:false with its message, and later commands still apply', async () => {
     const fake = fakeHic();
-    fake.browser.parseGotoInput.mockRejectedValueOnce(new Error('Unrecognized locus: chrZ'));
+    fake.current.parseGotoInput.mockRejectedValueOnce(new Error('Unrecognized locus: chrZ'));
     const { send } = await joinedWith(fake);
     expect(await send({ type: 'gotoLocus', requestId: 'q4', locus: 'chrZ' })).toEqual({
       type: 'ack',
@@ -377,7 +261,7 @@ describe('attachRemote: command failures', () => {
 
   it('a surface call that throws synchronously acks ok:false', async () => {
     const fake = fakeHic();
-    fake.browser.setNormalization.mockImplementation(() => {
+    fake.current.setNormalization.mockImplementation(() => {
       throw new Error('disposed');
     });
     const { send } = await joinedWith(fake);
@@ -397,18 +281,20 @@ describe('attachRemote: command failures', () => {
     const { socket, send } = await joinedWith(fake);
     socket.receive({ type: 'gotoLocus', locus: 'chr1' });
     await send({ type: 'zoomIn', requestId: 'after' }); // drains the queue
-    expect(fake.browser.parseGotoInput).not.toHaveBeenCalled();
+    expect(fake.current.parseGotoInput).not.toHaveBeenCalled();
     expect(acksOf(socket).map((a) => a.requestId)).toEqual(['after']);
   });
 });
 
 describe('attachRemote: §5.2 view command rows', () => {
   it('loadMap calls loadHicFile with the map config, even with no map loaded yet', async () => {
-    const fake = fakeHic({ mapLoaded: false });
+    const fake = fakeHic({ panels: [null] });
+    // A map whose dataset carries neither a name nor a genome.
+    fake.current.loadHicFile.mockImplementationOnce(async ({ url }) => (fake.current.dataset = { url }));
     const { send } = await joinedWith(fake);
     const cmd = { url: 'https://maps.example/b.hic', name: 'B', normalization: 'KR', locus: 'chr1 chr1' };
     const ack = await send({ type: 'loadMap', requestId: 'm1', ...cmd });
-    expect(fake.browser.loadHicFile).toHaveBeenCalledWith(cmd);
+    expect(fake.current.loadHicFile).toHaveBeenCalledWith(cmd);
     expect(ack).toEqual({
       type: 'ack',
       requestId: 'm1',
@@ -422,32 +308,32 @@ describe('attachRemote: §5.2 view command rows', () => {
     const { send } = await joinedWith(fake);
     const cmd = { url: 'https://maps.example/ctl.hic', name: 'ctl', normalization: 'VC' };
     const ack = await send({ type: 'loadControlMap', requestId: 'c1', ...cmd });
-    expect(fake.browser.loadHicControlFile).toHaveBeenCalledWith(cmd);
-    expect(fake.browser.setDisplayMode).toHaveBeenCalledWith('AOB');
-    expect(fake.browser.loadHicControlFile.mock.invocationCallOrder[0]).toBeLessThan(
-      fake.browser.setDisplayMode.mock.invocationCallOrder[0],
+    expect(fake.current.loadHicControlFile).toHaveBeenCalledWith(cmd);
+    expect(fake.current.setDisplayMode).toHaveBeenCalledWith('AOB');
+    expect(fake.current.loadHicControlFile.mock.invocationCallOrder[0]).toBeLessThan(
+      fake.current.setDisplayMode.mock.invocationCallOrder[0],
     );
     expect(ack.ok).toBe(true);
   });
 
   it('loadControlMap without a base map leaves the display mode alone', async () => {
-    const fake = fakeHic({ mapLoaded: false });
+    const fake = fakeHic({ panels: [null] });
     const { send } = await joinedWith(fake);
     await send({ type: 'loadControlMap', requestId: 'c2', url: 'https://maps.example/ctl.hic' });
-    expect(fake.browser.loadHicControlFile).toHaveBeenCalled();
-    expect(fake.browser.setDisplayMode).not.toHaveBeenCalled();
+    expect(fake.current.loadHicControlFile).toHaveBeenCalled();
+    expect(fake.current.setDisplayMode).not.toHaveBeenCalled();
   });
 
   it('loadControlMap does not re-set AOB when already in AOB', async () => {
     const fake = fakeHic();
-    fake.browser.getDisplayMode.mockReturnValue('AOB');
+    fake.current.getDisplayMode.mockReturnValue('AOB');
     const { send } = await joinedWith(fake);
     await send({ type: 'loadControlMap', requestId: 'c3', url: 'https://maps.example/ctl.hic' });
-    expect(fake.browser.setDisplayMode).not.toHaveBeenCalled();
+    expect(fake.current.setDisplayMode).not.toHaveBeenCalled();
   });
 
   it('loadSession restores the session into the host container', async () => {
-    const fake = fakeHic({ mapLoaded: false });
+    const fake = fakeHic({ panels: [null] });
     const { send } = await joinedWith(fake);
     const session = { browsers: [{ url: 'https://maps.example/a.hic' }] };
     const ack = await send({ type: 'loadSession', requestId: 's1', sessionData: session });
@@ -460,7 +346,7 @@ describe('attachRemote: §5.2 view command rows', () => {
     const { send } = await joinedWith(fake);
     await send({ type: 'zoomIn', requestId: 'z1', centerX: 10, centerY: 20 });
     await send({ type: 'zoomOut', requestId: 'z2', centerX: 30, centerY: 40 });
-    expect(fake.browser.zoomAndCenter.mock.calls).toEqual([
+    expect(fake.current.zoomAndCenter.mock.calls).toEqual([
       [1, 10, 20],
       [-1, 30, 40],
     ]);
@@ -470,7 +356,7 @@ describe('attachRemote: §5.2 view command rows', () => {
     const fake = fakeHic();
     const { send } = await joinedWith(fake);
     const ack = await send({ type: 'zoomIn', requestId: 'z3' });
-    expect(fake.browser.zoomAndCenter).toHaveBeenCalledWith(1, 400, 300);
+    expect(fake.current.zoomAndCenter).toHaveBeenCalledWith(1, 400, 300);
     expect(ack.ok).toBe(true);
   });
 
@@ -478,11 +364,11 @@ describe('attachRemote: §5.2 view command rows', () => {
     const fake = fakeHic(); // threshold 2000
     const { send } = await joinedWith(fake);
     const ack = await send({ type: 'setForegroundColor', requestId: 'f1', color: { r: 255, g: 0, b: 0 } });
-    expect(fake.colorScale.setColorComponents).toHaveBeenCalledWith({ r: 255, g: 0, b: 0 });
-    expect(fake.browser.contactMatrixView.setColorScale).toHaveBeenCalledWith(fake.colorScale);
-    expect(fake.browser.setColorScaleThreshold).toHaveBeenCalledWith(2000);
-    expect(fake.colorScale.setColorComponents.mock.invocationCallOrder[0]).toBeLessThan(
-      fake.browser.setColorScaleThreshold.mock.invocationCallOrder[0],
+    expect(fake.current.colorScale.setColorComponents).toHaveBeenCalledWith({ r: 255, g: 0, b: 0 });
+    expect(fake.current.contactMatrixView.setColorScale).toHaveBeenCalledWith(fake.current.colorScale);
+    expect(fake.current.setColorScaleThreshold).toHaveBeenCalledWith(2000);
+    expect(fake.current.colorScale.setColorComponents.mock.invocationCallOrder[0]).toBeLessThan(
+      fake.current.setColorScaleThreshold.mock.invocationCallOrder[0],
     );
     expect(ack.ok).toBe(true);
   });
@@ -491,43 +377,44 @@ describe('attachRemote: §5.2 view command rows', () => {
     const fake = fakeHic();
     const { send } = await joinedWith(fake);
     await send({ type: 'setForegroundColor', requestId: 'f2', color: { r: 0, g: 0, b: 255 }, threshold: 750 });
-    expect(fake.colorScale.setColorComponents).toHaveBeenCalledWith({ r: 0, g: 0, b: 255 });
-    expect(fake.browser.setColorScaleThreshold).toHaveBeenCalledWith(750);
+    expect(fake.current.colorScale.setColorComponents).toHaveBeenCalledWith({ r: 0, g: 0, b: 255 });
+    expect(fake.current.setColorScaleThreshold).toHaveBeenCalledWith(750);
   });
 
   it('setBackgroundColor sets the matrix background', async () => {
     const fake = fakeHic();
     const { send } = await joinedWith(fake);
     const ack = await send({ type: 'setBackgroundColor', requestId: 'b1', color: { r: 1, g: 2, b: 3 } });
-    expect(fake.browser.contactMatrixView.setBackgroundColor).toHaveBeenCalledWith({ r: 1, g: 2, b: 3 });
+    expect(fake.current.contactMatrixView.setBackgroundColor).toHaveBeenCalledWith({ r: 1, g: 2, b: 3 });
     expect(ack.ok).toBe(true);
   });
 
   it('setColorScale sets, doubles or halves the threshold', async () => {
     const fake = fakeHic(); // threshold 2000
+    fake.current.setColorScaleThreshold.mockImplementation(() => {}); // and it stays 2000
     const { send } = await joinedWith(fake);
     await send({ type: 'setColorScale', requestId: 't1', action: 'set', value: 500 });
     await send({ type: 'setColorScale', requestId: 't2', action: 'increase' });
     await send({ type: 'setColorScale', requestId: 't3', action: 'decrease' });
-    expect(fake.browser.setColorScaleThreshold.mock.calls).toEqual([[500], [4000], [1000]]);
+    expect(fake.current.setColorScaleThreshold.mock.calls).toEqual([[500], [4000], [1000]]);
   });
 
   it('setNormalization sets the normalization', async () => {
     const fake = fakeHic();
     const { send } = await joinedWith(fake);
     const ack = await send({ type: 'setNormalization', requestId: 'n1', normalization: 'VC_SQRT' });
-    expect(fake.browser.setNormalization).toHaveBeenCalledWith('VC_SQRT');
+    expect(fake.current.setNormalization).toHaveBeenCalledWith('VC_SQRT');
     expect(ack.ok).toBe(true);
   });
 
   it('commands apply in arrival order: gotoLocus waits for a pending loadMap', async () => {
-    const fake = fakeHic({ mapLoaded: false });
+    const fake = fakeHic({ panels: [null] });
     let finishLoad;
-    fake.browser.loadHicFile.mockImplementationOnce(
+    fake.current.loadHicFile.mockImplementationOnce(
       (config) =>
         new Promise((resolve) => {
           finishLoad = () => {
-            fake.browser.dataset = { url: config.url };
+            fake.current.dataset = { url: config.url };
             resolve();
           };
         }),
@@ -551,6 +438,7 @@ describe('attachRemote: §5.2 view command rows', () => {
 describe('attachRemote: §5.2 track command rows', () => {
   it('loadTrack calls loadTracks with the track config and acks ok without waiting for the load', async () => {
     const fake = fakeHic();
+    fake.current.loadTracks.mockReturnValue(new Promise(() => {})); // a track load that never finishes
     const { send } = await joinedWith(fake);
     const ack = await send({
       type: 'loadTrack',
@@ -561,7 +449,7 @@ describe('attachRemote: §5.2 track command rows', () => {
       trackType: 'annotation',
       format: 'refgene',
     });
-    expect(fake.browser.loadTracks).toHaveBeenCalledWith([
+    expect(fake.current.loadTracks).toHaveBeenCalledWith([
       {
         url: 'https://tracks.example/genes.txt.gz',
         name: 'Refseq Select',
@@ -582,7 +470,7 @@ describe('attachRemote: §5.2 track command rows', () => {
     const fake = fakeHic();
     const { send } = await joinedWith(fake);
     await send({ type: 'loadTrack', requestId: 'l2', url: 'https://tracks.example/a.bw' });
-    expect(fake.browser.loadTracks).toHaveBeenCalledWith([{ url: 'https://tracks.example/a.bw' }]);
+    expect(fake.current.loadTracks).toHaveBeenCalledWith([{ url: 'https://tracks.example/a.bw' }]);
   });
 
   // The genes preset (ticket 32): the file follows the map's genome, chosen here per panel.
@@ -591,10 +479,10 @@ describe('attachRemote: §5.2 track command rows', () => {
     ['mm10', 'https://hgdownload.soe.ucsc.edu/goldenPath/mm10/database/ncbiRefSeqSelect.txt.gz'],
     ['dm6', 'https://hgdownload.soe.ucsc.edu/goldenPath/dm6/database/ncbiRefSeq.txt.gz'],
   ])('loadTrack preset genes on a %s map loads that genome\'s RefSeq file as a refgene annotation', async (genomeId, url) => {
-    const fake = fakeHic({ genomeId });
+    const fake = fakeHic({ panels: [{ ...MAP_A, genome: genomeId }] });
     const { send } = await joinedWith(fake);
     const ack = await send({ type: 'loadTrack', requestId: 'g1', preset: 'genes', name: 'Refseq Select', color: { r: 0, g: 0, b: 0 } });
-    expect(fake.browser.loadTracks).toHaveBeenCalledWith([
+    expect(fake.current.loadTracks).toHaveBeenCalledWith([
       { url, type: 'annotation', format: 'refgene', name: 'Refseq Select', color: 'rgb(0,0,0)' },
     ]);
     expect(ack.ok).toBe(true);
@@ -606,11 +494,11 @@ describe('attachRemote: §5.2 track command rows', () => {
     const ack = await send({ type: 'loadTrack', requestId: 'g2', preset: 'genes' });
     expect(ack.ok).toBe(false);
     expect(ack.error).toMatch(/which genome/);
-    expect(fake.browser.loadTracks).not.toHaveBeenCalled();
+    expect(fake.current.loadTracks).not.toHaveBeenCalled();
   });
 
   it('loadTrack with an unknown preset acks ok:false', async () => {
-    const fake = fakeHic({ genomeId: 'hg19' });
+    const fake = fakeHic({ panels: [{ ...MAP_A, genome: 'hg19' }] });
     const { send } = await joinedWith(fake);
     const ack = await send({ type: 'loadTrack', requestId: 'g3', preset: 'nonsense' });
     expect(ack.ok).toBe(false);
@@ -618,20 +506,21 @@ describe('attachRemote: §5.2 track command rows', () => {
   });
 
   it('loadTrack before any map is loaded acks ok:false', async () => {
-    const fake = fakeHic({ mapLoaded: false });
+    const fake = fakeHic({ panels: [null] });
     const { send } = await joinedWith(fake);
     const ack = await send({ type: 'loadTrack', requestId: 'l3', url: 'https://tracks.example/a.bw' });
     expect(ack).toEqual({ type: 'ack', requestId: 'l3', ok: false, error: 'panel 1 (no map): No map loaded' });
-    expect(fake.browser.loadTracks).not.toHaveBeenCalled();
+    expect(fake.current.loadTracks).not.toHaveBeenCalled();
   });
 
   it('removeTrack resolves by name, case-insensitively, and by 1-based index', async () => {
     const [a, b] = [fakeTrackPair('CTCF'), fakeTrackPair('H3K27ac')];
     const fake = fakeHic({ trackPairs: [a, b] });
+    fake.current.layoutController.removeTrackXYPair.mockImplementation(() => {}); // the rows stay, so '2' is still b
     const { send } = await joinedWith(fake);
     expect((await send({ type: 'removeTrack', requestId: 'r1', track: 'ctcf' })).ok).toBe(true);
     expect((await send({ type: 'removeTrack', requestId: 'r2', track: '2' })).ok).toBe(true);
-    expect(fake.browser.layoutController.removeTrackXYPair.mock.calls).toEqual([[a], [b]]);
+    expect(fake.current.layoutController.removeTrackXYPair.mock.calls).toEqual([[a], [b]]);
   });
 
   it('setTrackColor sets an rgb colour, or resets it when none is given', async () => {
@@ -651,7 +540,7 @@ describe('attachRemote: §5.2 track command rows', () => {
     expect(tp.setTrackLabelName.mock.calls).toEqual([['CTCF rep1']]); // once: through the name setter only
     expect(tp.track.name).toBe('CTCF rep1');
     expect((await send({ type: 'removeTrack', requestId: 'n2', track: 'ctcf rep1' })).ok).toBe(true);
-    expect(fake.browser.layoutController.removeTrackXYPair).toHaveBeenCalledWith(tp);
+    expect(fake.current.layoutController.removeTrackXYPair).toHaveBeenCalledWith(tp);
   });
 
   it('setTrackDataRange sets min and max', async () => {
@@ -683,18 +572,19 @@ describe('attachRemote: §5.2 track command rows', () => {
     expect(ack).toEqual({ type: 'ack', requestId: 'u1', ok: false, error: `${PANEL_1}: Track not found: ${track}` });
     const colorAck = await send({ type: 'setTrackColor', requestId: 'u2', track, color: { r: 1, g: 2, b: 3 } });
     expect(colorAck.ok).toBe(false);
-    expect(fake.browser.layoutController.removeTrackXYPair).not.toHaveBeenCalled();
+    expect(fake.current.layoutController.removeTrackXYPair).not.toHaveBeenCalled();
     expect(tp.setColor).not.toHaveBeenCalled();
   });
 
   it('removeTrack on a 2D track, by name or by an index past the track pairs, removes it through the browser', async () => {
     const [loops, domains] = [fakeTrack2D('loops'), fakeTrack2D('domains')];
     const fake = fakeHic({ trackPairs: [fakeTrackPair('CTCF')], tracks2D: [loops, domains] });
+    fake.current.removeTrack2D.mockImplementation(() => {}); // the tracks stay, so '3' is still domains
     const { send } = await joinedWith(fake);
     expect((await send({ type: 'removeTrack', requestId: 't1', track: 'LOOPS' })).ok).toBe(true);
     expect((await send({ type: 'removeTrack', requestId: 't2', track: '3' })).ok).toBe(true);
-    expect(fake.browser.removeTrack2D.mock.calls).toEqual([[loops], [domains]]);
-    expect(fake.browser.layoutController.removeTrackXYPair).not.toHaveBeenCalled();
+    expect(fake.current.removeTrack2D.mock.calls).toEqual([[loops], [domains]]);
+    expect(fake.current.layoutController.removeTrackXYPair).not.toHaveBeenCalled();
   });
 
   it('setTrackColor on a 2D track sets an rgb colour, or gives back the features’ own when none is given', async () => {
@@ -703,7 +593,7 @@ describe('attachRemote: §5.2 track command rows', () => {
     const { send } = await joinedWith(fake);
     expect((await send({ type: 'setTrackColor', requestId: 'c1', track: 'loops', color: { r: 0, g: 0, b: 255 } })).ok).toBe(true);
     expect((await send({ type: 'setTrackColor', requestId: 'c2', track: '1' })).ok).toBe(true);
-    expect(fake.browser.setTrack2DColor.mock.calls).toEqual([
+    expect(fake.current.setTrack2DColor.mock.calls).toEqual([
       [loops, 'rgb(0,0,255)'],
       [loops, undefined],
     ]);
@@ -714,11 +604,11 @@ describe('attachRemote: §5.2 track command rows', () => {
     const fake = fakeHic({ trackPairs: [fakeTrackPair('CTCF')], tracks2D: [loops] });
     const { send } = await joinedWith(fake);
     expect((await send({ type: 'setTrackName', requestId: 'n1', track: '2', name: 'HiCCUPS loops' })).ok).toBe(true);
-    expect(fake.browser.setTrack2DName).toHaveBeenCalledWith(loops, 'HiCCUPS loops');
+    expect(fake.current.setTrack2DName).toHaveBeenCalledWith(loops, 'HiCCUPS loops');
     const { result } = await send({ type: 'getTrackList', requestId: 'n2' });
     expect(result[1]).toMatchObject({ index: 2, is2D: true, name: 'HiCCUPS loops' });
     expect((await send({ type: 'removeTrack', requestId: 'n3', track: 'hiccups loops' })).ok).toBe(true);
-    expect(fake.browser.removeTrack2D).toHaveBeenCalledWith(loops);
+    expect(fake.current.removeTrack2D).toHaveBeenCalledWith(loops);
   });
 
   it.each(['setTrackDataRange', 'setTrackAutoscale', 'setTrackLogScale'])(
@@ -736,7 +626,7 @@ describe('attachRemote: §5.2 track command rows', () => {
   );
 
   it('a track command before any map is loaded acks ok:false', async () => {
-    const { send } = await joinedWith(fakeHic({ mapLoaded: false }));
+    const { send } = await joinedWith(fakeHic({ panels: [null] }));
     const ack = await send({ type: 'removeTrack', requestId: 'm1', track: '1' });
     expect(ack).toEqual({ type: 'ack', requestId: 'm1', ok: false, error: 'panel 1 (no map): No map loaded' });
   });
@@ -807,7 +697,9 @@ describe('attachRemote: §5.2 request-style commands', () => {
   });
 
   it('getCompressedSession returns hic.compressedSession() as the result', async () => {
-    const { send } = await joinedWith(fakeHic());
+    const fake = fakeHic();
+    fake.compressedSession.mockReturnValue('session=blob:abc123');
+    const { send } = await joinedWith(fake);
     expect(await send({ type: 'getCompressedSession', requestId: 's2' })).toEqual({
       type: 'ack',
       requestId: 's2',

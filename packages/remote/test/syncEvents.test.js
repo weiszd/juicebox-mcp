@@ -1,253 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { attachRemote } from '../src/attachRemote.js';
-
-// Minimal stand-in for the platform WebSocket: the test drives open/message.
-class FakeSocket {
-  constructor(url) {
-    this.url = url;
-    this.sent = [];
-    this.readyState = 0;
-    FakeSocket.instances.push(this);
-  }
-  send(data) {
-    this.sent.push(JSON.parse(data));
-  }
-  close() {
-    this.readyState = 3;
-    this.onclose?.({ code: 1000, reason: '', wasClean: true });
-  }
-  open() {
-    this.readyState = 1;
-    this.onopen?.({});
-  }
-  receive(msg) {
-    this.onmessage?.({ data: JSON.stringify(msg) });
-  }
-}
-FakeSocket.instances = [];
-
-// Subscriber lists shaped like juicebox.js's: `fire`/`post` play the viewer
-// announcing a change, `count` is what is still subscribed.
-function fakeCoordinator() {
-  const subscribers = {};
-  return {
-    addCallback(name, fn) {
-      (subscribers[name] ??= []).push(fn);
-      return () => {
-        const i = subscribers[name].indexOf(fn);
-        if (i > -1) subscribers[name].splice(i, 1);
-      };
-    },
-    fire(name, payload) {
-      for (const fn of [...(subscribers[name] ?? [])]) fn(payload);
-    },
-    count: () => Object.values(subscribers).flat().length,
-  };
-}
-
-function fakeBus() {
-  const subscribers = {};
-  return {
-    subscribe(type, fn) {
-      (subscribers[type] ??= []).push(fn);
-    },
-    unsubscribe(type, fn) {
-      subscribers[type] = (subscribers[type] ?? []).filter((f) => f !== fn);
-    },
-    post(type, data) {
-      for (const fn of [...(subscribers[type] ?? [])]) fn({ type, data });
-    },
-    count: () => Object.values(subscribers).flat().length,
-  };
-}
-
-// A track pair whose setters post TrackXYPairChange, as juicebox.js's do. Setting
-// `track.name` relabels the row, as igv's TrackBase setter does: the name first.
-// It knows its browser, as juicebox.js's do.
-function fakeTrackPair(bus, config, browser) {
-  const change = (property, value) => bus.post('TrackXYPairChange', { trackPair, property, value });
-  let name = config.name;
-  const trackPair = {
-    browser,
-    track: {
-      get name() {
-        return name;
-      },
-      set name(n) {
-        name = n;
-        trackPair.setTrackLabelName(n);
-      },
-      config,
-    },
-    setColor: vi.fn((color) => change('color', color)),
-    setTrackLabelName: vi.fn((name) => change('name', name)),
-    setDataRange: vi.fn((min, max) => change('dataRange', { min, max })),
-    setAutoscale: vi.fn((on) => change('autoscale', on)),
-    setLogScale: vi.fn((on) => change('logScale', on)),
-  };
-  return trackPair;
-}
-
-const fakeTrack2D = (config) => ({ name: config.name, config });
-const is2D = ({ url }) => url.endsWith('.bedpe');
-
-const tick = () => Promise.resolve();
-
-// A browser whose surface calls announce themselves the way juicebox.js's do
-// (async ones after an await), so a missing guard would show up as a sync event.
-function fakeBrowser(bus) {
-  const coordinator = fakeCoordinator();
-  let rgb = { r: 255, g: 0, b: 0 };
-  const colorScale = {
-    threshold: 2000,
-    getThreshold: () => colorScale.threshold,
-    getColorComponents: () => ({ ...rgb }),
-    setColorComponents: vi.fn((c) => (rgb = { ...c })),
-  };
-  const browser = {
-    config: { width: 640, height: 480 },
-    coordinator,
-    colorScale,
-    dataset: { url: 'https://maps.example/a.hic', name: 'A' },
-    trackPairs: [],
-    tracks2D: [],
-    getSyncState: vi.fn(() => ({ chr1Name: 'chr1', chr2Name: 'chr1', binSize: 5000, binX: 10, binY: 10 })),
-    syncState: vi.fn(async (state) => {
-      await tick();
-      coordinator.fire('onLocusChange', { state, changes: {}, browser });
-    }),
-    getColorScale: vi.fn(() => browser.colorScale),
-    setColorScaleThreshold: vi.fn((t) => {
-      browser.colorScale.threshold = t;
-      coordinator.fire('onColorScaleChange', { colorScale: browser.colorScale, browser });
-    }),
-    setNormalization: vi.fn((normalization) => coordinator.fire('onNormalizationChange', { normalization, browser })),
-    displayMode: 'A',
-    getDisplayMode: () => browser.displayMode,
-    setDisplayMode: vi.fn(async (mode) => {
-      await tick();
-      browser.displayMode = mode;
-      coordinator.fire('onDisplayModeChange', { mode, browser });
-    }),
-    loadHicFile: vi.fn(async (config) => {
-      await tick();
-      browser.dataset = { url: config.url, name: config.name };
-      coordinator.fire('onMapLoaded', { dataset: browser.dataset, browser });
-    }),
-    loadHicControlFile: vi.fn(async (config) => {
-      await tick();
-      browser.controlDataset = { url: config.url, name: config.name };
-      coordinator.fire('onControlMapLoaded', { controlDataset: browser.controlDataset, browser });
-    }),
-    loadTracks: vi.fn(async (configs) => {
-      await tick();
-      for (const config of configs) {
-        if (is2D(config)) {
-          const track2D = fakeTrack2D(config);
-          browser.tracks2D = [...browser.tracks2D, track2D];
-          bus.post('Track2DLoad', track2D);
-        } else {
-          const trackPair = fakeTrackPair(bus, config, browser);
-          browser.trackPairs.push(trackPair);
-          bus.post('TrackXYPairLoad', trackPair);
-        }
-      }
-    }),
-    // As juicebox.js's: the name or colour is set before the change is posted.
-    removeTrack2D: vi.fn((track2D) => {
-      if (!browser.tracks2D.includes(track2D)) return;
-      browser.tracks2D = browser.tracks2D.filter((t) => t !== track2D);
-      bus.post('Track2DRemoval', track2D);
-    }),
-    setTrack2DColor: vi.fn((track2D, color) => {
-      track2D.color = color;
-      bus.post('Track2DChange', { track2D, property: 'color', value: color });
-    }),
-    setTrack2DName: vi.fn((track2D, name) => {
-      track2D.name = name;
-      bus.post('Track2DChange', { track2D, property: 'name', value: name });
-    }),
-    parseGotoInput: vi.fn(async () => {
-      await tick();
-      coordinator.fire('onLocusChange', { state: {}, changes: {}, browser });
-    }),
-    layoutController: {
-      removeTrackXYPair: vi.fn((trackPair) => {
-        browser.trackPairs.splice(browser.trackPairs.indexOf(trackPair), 1);
-        bus.post('TrackXYPairRemoval', trackPair);
-      }),
-    },
-    contactMatrixView: { setColorScale: vi.fn(), setBackgroundColor: vi.fn() },
-  };
-  return browser;
-}
-
-// `panels` browsers left to right, the last one current. createBrowser adds one on the
-// right and posts BrowserAdd, setCurrentBrowser selects it, posting BrowserSelect, and
-// deleteBrowser posts BrowserDelete before taking it out, as juicebox.js's (fork) do.
-// toJSON skips a panel without a map url, as juicebox.js's session does; restoreSession
-// replaces the panels, an entry `{}` becoming an empty one, and posts no BrowserAdd.
-function fakeHic({ panels = 1 } = {}) {
-  const bus = fakeBus();
-  const hic = {
-    EventBus: { globalBus: bus },
-    panels: Array.from({ length: panels }, () => fakeBrowser(bus)),
-    current: undefined,
-    getCurrentBrowser: () => hic.current,
-    getAllBrowsers: () => [...hic.panels],
-    setCurrentBrowser: vi.fn((browser) => {
-      hic.current = browser;
-      bus.post('BrowserSelect', browser);
-    }),
-    createBrowser: vi.fn(async () => {
-      await tick();
-      const browser = fakeBrowser(bus);
-      browser.dataset = undefined;
-      hic.panels.push(browser);
-      bus.post('BrowserAdd', browser);
-      return browser;
-    }),
-    restoreSession: vi.fn(async (container, session) => {
-      await tick();
-      hic.panels = session.browsers.map(({ url, name }) => {
-        const browser = fakeBrowser(bus);
-        browser.dataset = url ? { url, name } : undefined;
-        return browser;
-      });
-      hic.setCurrentBrowser(hic.panels[0]);
-    }),
-    toJSON: () => ({
-      browsers: hic.panels.filter((p) => p.dataset?.url).map(({ dataset: { url, name } }) => ({ url, name })),
-      selectedGene: 'MYC',
-    }),
-    compressedSession: () => 'session=blob:x',
-    bus,
-    newBrowser: () => fakeBrowser(bus),
-    deleteBrowser: vi.fn((browser) => {
-      bus.post('BrowserDelete', browser);
-      hic.panels.splice(hic.panels.indexOf(browser), 1);
-      if (hic.current === browser) hic.setCurrentBrowser(hic.panels[0]);
-    }),
-    /** juicebox-web's clone button: an empty panel on the right, selected. */
-    clone: async () => {
-      const browser = await hic.createBrowser();
-      hic.setCurrentBrowser(browser);
-      return browser;
-    },
-    addTrack: (config, browser = hic.current) => {
-      const trackPair = fakeTrackPair(bus, config, browser);
-      browser.trackPairs.push(trackPair);
-      return trackPair;
-    },
-    addTrack2D: (config) => {
-      const track2D = fakeTrack2D(config);
-      hic.current.tracks2D.push(track2D);
-      return track2D;
-    },
-  };
-  hic.current = hic.panels.at(-1);
-  return hic;
-}
+import { FakeSocket, fakeHic, fakeTrackPair, fakeTrack2D, tick } from './fakeJuicebox.js';
 
 const syncEventsOf = (socket) => socket.sent.filter((m) => m.type === 'syncEvent');
 const acksOf = (socket) => socket.sent.filter((m) => m.type === 'ack');
@@ -390,7 +143,7 @@ describe('sync events: §5.3 EventBus track events', () => {
   it('TrackXYPairLoad → trackLoad {configs}', async () => {
     const hic = fakeHic();
     const { socket } = await joined(hic);
-    hic.bus.post('TrackXYPairLoad', fakeTrackPair(hic.bus, config, hic.current));
+    hic.bus.post('TrackXYPairLoad', fakeTrackPair(config, {}, hic.current));
     await settle();
     expect(syncEventsOf(socket)).toEqual([{ type: 'syncEvent', panel: 1, syncType: 'trackLoad', configs: [config] }]);
   });
@@ -398,7 +151,7 @@ describe('sync events: §5.3 EventBus track events', () => {
   it('TrackXYPairRemoval → trackRemove {track}', async () => {
     const hic = fakeHic();
     const { socket } = await joined(hic);
-    hic.bus.post('TrackXYPairRemoval', fakeTrackPair(hic.bus, config, hic.current));
+    hic.bus.post('TrackXYPairRemoval', fakeTrackPair(config, {}, hic.current));
     await settle();
     expect(syncEventsOf(socket)).toEqual([{ type: 'syncEvent', panel: 1, syncType: 'trackRemove', track: 'CTCF' }]);
   });
@@ -412,7 +165,7 @@ describe('sync events: §5.3 EventBus track events', () => {
   ])('TrackXYPairChange %s → one sync event naming the track', async (property, value, expected) => {
     const hic = fakeHic();
     const { socket } = await joined(hic);
-    hic.bus.post('TrackXYPairChange', { trackPair: fakeTrackPair(hic.bus, config, hic.current), property, value });
+    hic.bus.post('TrackXYPairChange', { trackPair: fakeTrackPair(config, {}, hic.current), property, value });
     await settle();
     expect(syncEventsOf(socket)).toEqual([{ type: 'syncEvent', panel: 1, track: 'CTCF', ...expected }]);
   });
@@ -420,7 +173,7 @@ describe('sync events: §5.3 EventBus track events', () => {
   it('after a rename, the track is named by its new name', async () => {
     const hic = fakeHic();
     const { socket } = await joined(hic);
-    const trackPair = fakeTrackPair(hic.bus, config, hic.current);
+    const trackPair = fakeTrackPair(config, {}, hic.current);
     hic.bus.post('TrackXYPairChange', { trackPair, property: 'name', value: 'CTCF rep1' });
     hic.bus.post('TrackXYPairChange', { trackPair, property: 'color', value: 'blue' });
     await settle();
@@ -433,7 +186,7 @@ describe('sync events: §5.3 EventBus track events', () => {
   it('an event for a property it does not know is not sent', async () => {
     const hic = fakeHic();
     const { socket } = await joined(hic);
-    hic.bus.post('TrackXYPairChange', { trackPair: fakeTrackPair(hic.bus, config, hic.current), property: 'height', value: 40 });
+    hic.bus.post('TrackXYPairChange', { trackPair: fakeTrackPair(config, {}, hic.current), property: 'height', value: 40 });
     await settle();
     expect(syncEventsOf(socket)).toEqual([]);
   });
@@ -886,7 +639,7 @@ describe('sync events: following the current browser', () => {
     const { socket } = await joined(hic);
     const old = hic.current;
     hic.current = hic.newBrowser(); // a restored session replaces the panel
-    hic.panels = [hic.current];
+    hic.browsers = [hic.current];
     hic.bus.post('BrowserSelect', hic.current);
     old.coordinator.fire('onNormalizationChange', { normalization: 'KR', browser: old });
     hic.current.coordinator.fire('onNormalizationChange', { normalization: 'VC', browser: hic.current });
@@ -898,10 +651,10 @@ describe('sync events: following the current browser', () => {
     const hic = fakeHic();
     const first = hic.current;
     hic.current = undefined;
-    hic.panels = [];
+    hic.browsers = [];
     const { socket } = await joined(hic);
     hic.current = first;
-    hic.panels = [first];
+    hic.browsers = [first];
     hic.bus.post('BrowserSelect', first);
     first.coordinator.fire('onDisplayModeChange', { mode: 'B', browser: first });
     expect(syncEventsOf(socket)).toEqual([{ type: 'syncEvent', panel: 1, syncType: 'displayModeChange', displayMode: 'B' }]);
@@ -928,13 +681,13 @@ describe('sync events: several panels', () => {
     ['normalization', (p) => p.setNormalization('KR'), (p) => p.setNormalization],
   ])('a %s change in panel 2 reaches panel 2 on the peer, not panel 1', async (_label, change, surface) => {
     const { a, b, socketA, socketB } = await twoPages();
-    change(a.panels[1]);
+    change(a.browsers[1]);
     await settle();
     expect(syncEventsOf(socketA).map((e) => e.panel)).toEqual([2]);
     relay(socketA, socketB);
     await settle();
-    expect(surface(b.panels[1])).toHaveBeenCalled();
-    expect(surface(b.panels[0])).not.toHaveBeenCalled();
+    expect(surface(b.browsers[1])).toHaveBeenCalled();
+    expect(surface(b.browsers[0])).not.toHaveBeenCalled();
     expect(syncEventsOf(socketB)).toEqual([]);
   });
 
@@ -942,8 +695,8 @@ describe('sync events: several panels', () => {
     const config = { url: 'https://tracks.example/ctcf.bw', name: 'CTCF' };
     const a = fakeHic({ panels: 2 });
     const b = fakeHic({ panels: 2 });
-    const tracksA = a.panels.map((p) => a.addTrack(config, p));
-    const tracksB = b.panels.map((p) => b.addTrack(config, p));
+    const tracksA = a.browsers.map((p) => a.addTrack(config, p));
+    const tracksB = b.browsers.map((p) => b.addTrack(config, p));
     const { socket: socketA } = await joined(a);
     const { socket: socketB } = await joined(b);
     tracksA[1].setColor('#00ff00');
@@ -960,10 +713,10 @@ describe('sync events: several panels', () => {
   it('a 2D track change names the panel holding the track', async () => {
     const hic = fakeHic({ panels: 2 });
     const track2D = fakeTrack2D({ url: 'https://tracks.example/loops.bedpe', name: 'loops' });
-    hic.panels[0].tracks2D.push(track2D);
+    hic.browsers[0].tracks2D.push(track2D);
     const { socket } = await joined(hic);
-    hic.panels[0].setTrack2DColor(track2D, 'red');
-    hic.panels[0].removeTrack2D(track2D);
+    hic.browsers[0].setTrack2DColor(track2D, 'red');
+    hic.browsers[0].removeTrack2D(track2D);
     await settle();
     expect(syncEventsOf(socket).map(({ syncType, panel }) => [syncType, panel])).toEqual([
       ['trackColorChange', 1],
@@ -974,7 +727,7 @@ describe('sync events: several panels', () => {
   it('one drag in panels synced within the page sends one locusChange per panel', async () => {
     const hic = fakeHic({ panels: 2 });
     const { socket } = await joined(hic);
-    for (const p of hic.panels) p.coordinator.fire('onLocusChange', { state: {}, changes: {}, browser: p });
+    for (const p of hic.browsers) p.coordinator.fire('onLocusChange', { state: {}, changes: {}, browser: p });
     await settle();
     expect(syncEventsOf(socket).map(({ syncType, panel }) => [syncType, panel])).toEqual([
       ['locusChange', 1],
@@ -989,8 +742,8 @@ describe('sync events: several panels', () => {
     socket.receive({ type: 'syncEvent', syncType: 'locusChange', panel: 3, syncState });
     socket.receive({ type: 'syncEvent', syncType: 'normalizationChange', panel: 1, normalization: 'VC' });
     await settle();
-    expect(hic.panels[1].setNormalization).not.toHaveBeenCalled();
-    expect(hic.panels[0].setNormalization.mock.calls).toEqual([['VC']]);
+    expect(hic.browsers[1].setNormalization).not.toHaveBeenCalled();
+    expect(hic.browsers[0].setNormalization.mock.calls).toEqual([['VC']]);
     expect(hic.createBrowser).not.toHaveBeenCalled();
   });
 
@@ -1000,24 +753,24 @@ describe('sync events: several panels', () => {
     socket.receive({ type: 'syncEvent', syncType: 'mapLoad', panel: 3, url: 'https://maps.example/b.hic' });
     await settle();
     expect(hic.createBrowser).not.toHaveBeenCalled();
-    expect(hic.panels.map((p) => p.loadHicFile.mock.calls.length)).toEqual([0, 0]);
+    expect(hic.browsers.map((p) => p.loadHicFile.mock.calls.length)).toEqual([0, 0]);
   });
 
   it('an event without panel (a remote from before ADR-0008) goes to the current panel', async () => {
     const hic = fakeHic({ panels: 2 });
-    hic.current = hic.panels[0];
+    hic.current = hic.browsers[0];
     const { socket } = await joined(hic);
     socket.receive({ type: 'syncEvent', syncType: 'normalizationChange', normalization: 'KR' });
     await settle();
-    expect(hic.panels[0].setNormalization).toHaveBeenCalledWith('KR');
-    expect(hic.panels[1].setNormalization).not.toHaveBeenCalled();
+    expect(hic.browsers[0].setNormalization).toHaveBeenCalledWith('KR');
+    expect(hic.browsers[1].setNormalization).not.toHaveBeenCalled();
   });
 
   it('a panel added after attach and selected (BrowserSelect) is followed', async () => {
     const hic = fakeHic({ panels: 2 });
     const { socket } = await joined(hic);
     const added = hic.newBrowser();
-    hic.panels.push(added); // juicebox-web's clone button: create, then select
+    hic.browsers.push(added); // juicebox-web's clone button: create, then select
     hic.setCurrentBrowser(added);
     added.setNormalization('KR');
     expect(syncEventsOf(socket)).toEqual([{ type: 'syncEvent', syncType: 'normalizationChange', panel: 3, normalization: 'KR' }]);
@@ -1026,7 +779,7 @@ describe('sync events: several panels', () => {
   it('a panel opened by a command is followed, and one closed by a command is dropped', async () => {
     const hic = fakeHic({ panels: 2 });
     const { socket } = await joined(hic);
-    const [first] = hic.panels;
+    const [first] = hic.browsers;
     socket.receive({ type: 'loadMap', requestId: 'c1', panel: 'new', url: 'https://maps.example/b.hic', name: 'B' });
     socket.receive({ type: 'closePanel', requestId: 'c2', panel: 1 });
     await settle();
@@ -1035,7 +788,7 @@ describe('sync events: several panels', () => {
       ['c2', true],
     ]);
     expect(first.coordinator.count()).toBe(0);
-    hic.panels[1].setNormalization('KR'); // the new one, now second
+    hic.browsers[1].setNormalization('KR'); // the new one, now second
     expect(syncEventsOf(socket)).toEqual([{ type: 'syncEvent', syncType: 'normalizationChange', panel: 2, normalization: 'KR' }]);
   });
 });
@@ -1060,11 +813,11 @@ describe('sync events: opening and closing panels', () => {
     relay(socketA, socketB);
     await settle();
     expect(b.createBrowser).toHaveBeenCalledWith(expect.anything(), { width: 640, height: 480 });
-    expect(b.panels).toHaveLength(3);
-    expect(b.panels[2].dataset).toBeUndefined();
-    expect(b.setCurrentBrowser).toHaveBeenLastCalledWith(b.panels[2]);
+    expect(b.browsers).toHaveLength(3);
+    expect(b.browsers[2].dataset).toBeUndefined();
+    expect(b.setCurrentBrowser).toHaveBeenLastCalledWith(b.browsers[2]);
     expect(syncEventsOf(socketB)).toEqual([]);
-    b.panels[2].setNormalization('KR'); // followed
+    b.browsers[2].setNormalization('KR'); // followed
     expect(syncEventsOf(socketB)).toEqual([{ type: 'syncEvent', syncType: 'normalizationChange', panel: 3, normalization: 'KR' }]);
   });
 
@@ -1081,9 +834,9 @@ describe('sync events: opening and closing panels', () => {
     ]);
     relay(socketA, socketB);
     await settle();
-    expect(b.panels).toHaveLength(4);
-    expect(b.panels[2].loadHicFile).not.toHaveBeenCalled();
-    expect(b.panels[3].loadHicFile).toHaveBeenCalledWith({ url: 'https://maps.example/b.hic', name: 'B' });
+    expect(b.browsers).toHaveLength(4);
+    expect(b.browsers[2].loadHicFile).not.toHaveBeenCalled();
+    expect(b.browsers[3].loadHicFile).toHaveBeenCalledWith({ url: 'https://maps.example/b.hic', name: 'B' });
     expect(syncEventsOf(socketB)).toEqual([]);
   });
 
@@ -1097,9 +850,9 @@ describe('sync events: opening and closing panels', () => {
 
   it('a delete on one page closes the matching panel on the peer, and later events still land in the right panel', async () => {
     const { a, b, socketA, socketB } = await twoPages({ panelsA: 3, panelsB: 3 });
-    const [, secondB, thirdB] = b.panels;
-    a.deleteBrowser(a.panels[0]);
-    a.panels[1].setNormalization('KR'); // was panel 3, now panel 2
+    const [, secondB, thirdB] = b.browsers;
+    a.deleteBrowser(a.browsers[0]);
+    a.browsers[1].setNormalization('KR'); // was panel 3, now panel 2
     await settle();
     expect(syncEventsOf(socketA).map(({ syncType, panel }) => [syncType, panel])).toEqual([
       ['panelClose', 1],
@@ -1107,7 +860,7 @@ describe('sync events: opening and closing panels', () => {
     ]);
     relay(socketA, socketB);
     await settle();
-    expect(b.panels).toEqual([secondB, thirdB]);
+    expect(b.browsers).toEqual([secondB, thirdB]);
     expect(thirdB.setNormalization).toHaveBeenCalledWith('KR');
     expect(secondB.setNormalization).not.toHaveBeenCalled();
     expect(syncEventsOf(socketB)).toEqual([]);
@@ -1116,7 +869,7 @@ describe('sync events: opening and closing panels', () => {
   it('a closed panel is no longer followed', async () => {
     const hic = fakeHic({ panels: 2 });
     const { socket } = await joined(hic);
-    const [first] = hic.panels;
+    const [first] = hic.browsers;
     hic.deleteBrowser(first);
     expect(first.coordinator.count()).toBe(0);
     expect(syncEventsOf(socket)).toEqual([{ type: 'syncEvent', syncType: 'panelClose', panel: 1 }]);
@@ -1128,7 +881,7 @@ describe('sync events: opening and closing panels', () => {
     for (const panel of [1, 2, undefined]) socket.receive({ type: 'syncEvent', syncType: 'panelClose', panel });
     await settle();
     expect(hic.deleteBrowser).not.toHaveBeenCalled();
-    expect(hic.panels).toHaveLength(1);
+    expect(hic.browsers).toHaveLength(1);
   });
 
   it('commands that open and close panels echo nothing', async () => {
@@ -1144,7 +897,7 @@ describe('sync events: opening and closing panels', () => {
   });
 
   it('a peer’s getSession answer names every panel, an empty one as {}, and a late joiner restores it', async () => {
-    const a = fakeHic({ panels: 1 });
+    const a = fakeHic({ panels: 1, selectedGene: 'MYC' });
     const { socket: socketA } = await joined(a);
     await a.clone();
     socketA.receive({ type: 'getSession', requestId: 's1' });
@@ -1157,8 +910,8 @@ describe('sync events: opening and closing panels', () => {
     socketB.receive({ type: 'peerSessionData', session });
     await settle();
     expect(b.restoreSession).toHaveBeenCalledWith(expect.anything(), session);
-    expect(b.panels).toHaveLength(2);
-    expect(b.panels[1].dataset).toBeUndefined();
+    expect(b.browsers).toHaveLength(2);
+    expect(b.browsers[1].dataset).toBeUndefined();
     expect(syncEventsOf(socketB)).toEqual([]);
   });
 
@@ -1171,7 +924,7 @@ describe('sync events: opening and closing panels', () => {
     const { socket } = await joined(hic);
     socket.receive({ type: 'peerSessionData', session: { browsers: [{ url: 'https://maps.example/a.hic' }, {}] } });
     await settle();
-    expect(hic.panels).toHaveLength(2);
+    expect(hic.browsers).toHaveLength(2);
     expect(syncEventsOf(socket)).toEqual([]);
   });
 });
@@ -1190,9 +943,9 @@ describe('sync events: detach', () => {
   it('removes the callbacks from every panel', async () => {
     const hic = fakeHic({ panels: 2 });
     const { remote } = await joined(hic);
-    expect(hic.panels.map((p) => p.coordinator.count())).toEqual([9, 9]);
+    expect(hic.browsers.map((p) => p.coordinator.count())).toEqual([9, 9]);
     remote.detach();
-    expect(hic.panels.map((p) => p.coordinator.count())).toEqual([0, 0]);
+    expect(hic.browsers.map((p) => p.coordinator.count())).toEqual([0, 0]);
   });
 
   it('cancels a pending locus event', async () => {
