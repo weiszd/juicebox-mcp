@@ -1,0 +1,22 @@
+name: Test
+
+# Runs the whole vitest suite (remote in Node, server inside workerd) on every push and pull
+# request. package-lock.json is gitignored, so this installs from package.json ranges.
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: npm install
+      - run: npm run test:run

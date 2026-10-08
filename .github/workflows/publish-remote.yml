@@ -18,7 +18,19 @@ permissions:
   id-token: write   # lets the job mint the OIDC token npm trusts
 
 jobs:
+  test:
+    if: startsWith(github.event.release.tag_name, 'remote-v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: npm install
+      - run: npm run test:run
+
   publish:
+    needs: test
     if: startsWith(github.event.release.tag_name, 'remote-v')
     runs-on: ubuntu-latest
     # Required reviewers on this environment make every publish wait for an approval
