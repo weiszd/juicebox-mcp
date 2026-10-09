@@ -10,9 +10,10 @@
 // room someone is working in: the room asks its first live page for the session on every
 // join, and a probe that does not ack breaks that room for everyone in it.
 //
-// Why this exists: the Claude Code juicebot plugin and Claude Desktop connectors point at the
-// production Worker (juicebot-mcp.3dg.io); rooms there are a different Durable Object namespace
-// from the dev Worker's, so they cannot drive a page on juicebot-dev.3dg.io. MCP_URL overrides.
+// Why this exists: the Claude Code juicebot plugin and Claude Desktop connectors point at
+// juicebot-mcp.3dg.io, a custom domain of the frozen demo Worker juicebox-mcp-v2; its rooms are a
+// different Durable Object namespace from the dev Worker's, so they cannot drive a page on
+// juicebot-dev.3dg.io. MCP_URL overrides.
 const [room, tool, argsJson = '{}'] = process.argv.slice(2);
 if (!room || !tool) {
   console.error('usage: node scripts/dev-check.mjs <room> <tool> [json-args]');

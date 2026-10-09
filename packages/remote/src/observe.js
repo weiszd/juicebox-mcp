@@ -70,7 +70,7 @@ export function observe(hic, container, send) {
 
   /** The coordinator callbacks for one browser: each change is sent as that browser's panel. */
   const callbacksFor = (browser) => ({
-    // juicebox.js 4.6.0 does not pass `dragging` to callbacks yet, so until it does every change is debounced.
+    // `dragging` (juicebox.js fork build >=4.10.0-mcp): a drag is throttled, any other change debounced.
     onLocusChange: ({ dragging }) => locusChanged(browser, dragging),
     onColorScaleChange: ({ colorScale }) =>
       emit(browser, SyncEventType.COLOR_SCALE_CHANGE, colorScalePayload(colorScale, browser)),

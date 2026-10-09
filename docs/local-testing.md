@@ -209,7 +209,8 @@ The server tests run the real Worker and Durable Objects locally, with no Cloudf
 
 The Juicebot dev stack is the Worker at `juicebot-mcp-dev.3dg.io` and the page at
 `juicebot-dev.3dg.io` (CLAUDE.md names the deploy commands). The Claude Code juicebot plugin
-and Claude Desktop connectors point at the **production** Worker, whose rooms are a different
+and Claude Desktop connectors point at `juicebot-mcp.3dg.io`, a custom domain of the frozen demo Worker `juicebox-mcp-v2`
+(there is no separate Juicebot production Worker yet), whose rooms are a different
 Durable Object namespace, so they cannot drive a page on the dev site. `scripts/dev-check.mjs`
 talks to the dev Worker's `/mcp` directly:
 
