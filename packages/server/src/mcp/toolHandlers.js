@@ -15,6 +15,9 @@ import { generateQRPng } from '../qrPng.js';
 import { hicExperiments, formatHicExperiments, encodeSearch, formatEncodeSearch, HIC_ASSAYS, CLASSIFICATIONS } from '../search/encodePortal.js';
 import { VIEW_URI, VIEW_HTML, VIEW_META, VIEW_MIME_TYPE, TOOL_META } from './juiceboxView.js';
 import { CommandType } from '@aidenlab/juicebox-remote/protocol';
+import { AckStatus, ACK_TIMEOUT_MS } from '../room.js';
+
+const ACK_TIMEOUT_S = ACK_TIMEOUT_MS / 1000;
 
 // "#rrggbb" to {r, g, b}; colorSchema admits nothing else, so there is no failure case.
 function hexToRgb(hex) {
@@ -367,11 +370,8 @@ const COMMAND_TOOLS = [
  *
  * @param {McpServer} mcpServer
  * @param {object} deps
- * @param {function} deps.sendCommand - (tool, command) => Promise<{status, ok?, result?, error?}>, names `tool` then sends `command` to every page in the room
- * @param {function} deps.getRoom - () => Promise<string|null>, the room bound to this MCP session
- * @param {function} deps.bindRoom - (room) => Promise<void>, rebinds this MCP session to a room
- * @param {function} deps.sendRequest - (command) => Promise<{status, ok?, result?, error?}>, asks the first live page only
- * @param {function} deps.isBrowserConnected - () => Promise<boolean>
+ * @param {object} deps.room - this MCP session's room, from `roomForSession` (src/room.js):
+ *   send(tool, command), request(command), isConnected(), current(), bind(room)
  * @param {string} deps.sessionId - current MCP session ID
  * @param {string} deps.browserUrl - configured frontend URL
  * @param {function} deps.shortenURL - (url) => Promise<string>
@@ -379,11 +379,7 @@ const COMMAND_TOOLS = [
  */
 export function registerTools(mcpServer, deps) {
   const {
-    sendCommand,
-    sendRequest,
-    isBrowserConnected,
-    getRoom,
-    bindRoom,
+    room,
     sessionId,
     browserUrl,
     shortenURL,
@@ -394,17 +390,17 @@ export function registerTools(mcpServer, deps) {
 
   /**
    * Send a command to the bound room and report what the first page's ack said:
-   * `text` on ok, the page's error on not ok, "sent, unconfirmed" on no ack in 10 s,
+   * `text` on ok, the page's error on not ok, "sent, unconfirmed" on no ack in time,
    * and an error when no page is connected (design §5.4). The room names `tool` to
    * every page first (`toolCall`, §5.2).
    */
   async function runCommand(tool, command, text) {
-    const outcome = await sendCommand(tool, command);
-    if (outcome.status === 'no-page') {
+    const outcome = await room.send(tool, command);
+    if (outcome.status === AckStatus.NO_PAGE) {
       return { content: [{ type: 'text', text: `Error: ${NO_PAGE}` }], isError: true };
     }
-    if (outcome.status === 'unconfirmed') {
-      return { content: [{ type: 'text', text: `${text} (sent, unconfirmed: no page acknowledged within 10 s)` }] };
+    if (outcome.status === AckStatus.UNCONFIRMED) {
+      return { content: [{ type: 'text', text: `${text} (sent, unconfirmed: no page acknowledged within ${ACK_TIMEOUT_S} s)` }] };
     }
     if (!outcome.ok) {
       return { content: [{ type: 'text', text: `Error: ${outcome.error || `the page could not apply ${command.type}`}` }], isError: true };
@@ -418,11 +414,11 @@ export function registerTools(mcpServer, deps) {
    * {result} from its ack, or {error} with the tool result to return instead.
    */
   async function runRequest(type, payload = {}) {
-    const outcome = await sendRequest({ type, ...payload });
+    const outcome = await room.request({ type, ...payload });
     const fail = (text) => ({ error: { content: [{ type: 'text', text: `Error: ${text}` }], isError: true } });
-    if (outcome.status === 'no-page') return fail(NO_PAGE);
-    if (outcome.status === 'unconfirmed') return fail('the page did not answer within 10 s.');
-    if (outcome.status === 'closed') return fail('the page disconnected before answering.');
+    if (outcome.status === AckStatus.NO_PAGE) return fail(NO_PAGE);
+    if (outcome.status === AckStatus.UNCONFIRMED) return fail(`the page did not answer within ${ACK_TIMEOUT_S} s.`);
+    if (outcome.status === AckStatus.CLOSED) return fail('the page disconnected before answering.');
     if (!outcome.ok) return fail(outcome.error || `the page could not answer ${type}`);
     return { result: outcome.result };
   }
@@ -541,14 +537,14 @@ export function registerTools(mcpServer, deps) {
       inputSchema: {}
     },
     async () => {
-      const connected = await isBrowserConnected();
+      const connected = await room.isConnected();
       return {
         content: [{
           type: 'text',
           text: `Server Status:\n\n` +
             `Mode: Cloudflare Workers\n` +
             `Current Session ID: ${sessionId || 'none'}\n` +
-            `Room: ${(await getRoom()) || 'none'}\n` +
+            `Room: ${(await room.current()) || 'none'}\n` +
             `Browser Connected: ${connected ? 'Yes' : 'No'}\n` +
             `Browser URL: ${browserUrl}`
         }]
@@ -569,12 +565,12 @@ export function registerTools(mcpServer, deps) {
       _meta: TOOL_META
     },
     async () => {
-      const room = await getRoom();
-      if (!room) {
+      const roomId = await room.current();
+      if (!roomId) {
         return { content: [{ type: 'text', text: 'Error: No active session found. Please ensure the MCP connection is properly initialized.' }], isError: true };
       }
       const joinLink = new URL(browserUrl);
-      joinLink.searchParams.set('room', room);
+      joinLink.searchParams.set('room', roomId);
       const connectionUrl = joinLink.toString();
 
       // A bare URL: chat clients render it as clickable; a code block would not
@@ -583,17 +579,17 @@ export function registerTools(mcpServer, deps) {
       const content = [
         {
           type: 'text',
-          text: `Juicebox join link for room ${room}:\n${connectionUrl}\n\nThe user already sees a card for this. Next step: if you have the Claude desktop app's built-in browser, open this link in it now so the viewer shows in the panel beside the conversation. Never use Claude in Chrome or another browser tool, and if the built-in browser is unavailable do not attempt to open the link at all. Then reply in one short sentence (Juicebox is opening in the panel, or: press Open Juicebox) and ask what to load. Do not repeat the link, room id or QR.`
+          text: `Juicebox join link for room ${roomId}:\n${connectionUrl}\n\nThe user already sees a card for this. Next step: if you have the Claude desktop app's built-in browser, open this link in it now so the viewer shows in the panel beside the conversation. Never use Claude in Chrome or another browser tool, and if the built-in browser is unavailable do not attempt to open the link at all. Then reply in one short sentence (Juicebox is opening in the panel, or: press Open Juicebox) and ask what to load. Do not repeat the link, room id or QR.`
         },
         {
           type: 'resource_link',
           uri: connectionUrl,
           name: 'Open Juicebox',
-          description: `Join link for Juicebox room ${room}`,
+          description: `Join link for Juicebox room ${roomId}`,
           mimeType: 'text/html'
         }
       ];
-      const structuredContent = { room, joinUrl: connectionUrl };
+      const structuredContent = { room: roomId, joinUrl: connectionUrl };
       try {
         structuredContent.qrPng = generateQRPng(connectionUrl); // base64 PNG, drawn by the view
       } catch {
@@ -613,14 +609,14 @@ export function registerTools(mcpServer, deps) {
         room: z.string().regex(ROOM_ID, 'Must be a 10-character room id').describe('Room id: the value of the room parameter in the join link')
       }
     },
-    async ({ room }) => {
+    async ({ room: roomId }) => {
       if (!sessionId) {
         return { content: [{ type: 'text', text: 'Error: No active session found. Please ensure the MCP connection is properly initialized.' }], isError: true };
       }
-      room = room.toUpperCase();
-      await bindRoom(room);
-      const connected = await isBrowserConnected();
-      return { content: [{ type: 'text', text: `Joined room ${room}. ${connected ? 'A page is connected.' : 'No page is connected yet.'}` }] };
+      roomId = roomId.toUpperCase();
+      await room.bind(roomId);
+      const connected = await room.isConnected();
+      return { content: [{ type: 'text', text: `Joined room ${roomId}. ${connected ? 'A page is connected.' : 'No page is connected yet.'}` }] };
     }
   );
 

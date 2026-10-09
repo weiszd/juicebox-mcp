@@ -13,6 +13,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js';
 import { registerTools } from './mcp/toolHandlers.js';
+import { roomForSession } from './room.js';
 import { tinyURLShortener } from './urlShortener.js';
 import { logInfo, logWarn, logError } from './lib/logger.js';
 
@@ -163,71 +164,12 @@ async function handleMcpRequest(request, env) {
     const effectiveSessionId = sessionId ||
       (openaiSession ? await deriveSessionId(openaiSession, env.SESSION_HMAC_SECRET) : null);
 
-    // The room this MCP session is bound to: the one join_room stored, else the
-    // room named by the session id. Looked up at most once per request, and only
-    // by tools that reach a page.
-    const sessionStub = effectiveSessionId &&
-      env.MCP_SESSION.get(env.MCP_SESSION.idFromName(effectiveSessionId));
-    let roomLookup;
-    function getRoom() {
-      roomLookup ??= sessionStub
-        ? sessionStub.fetch('https://do/room').then(r => r.text()).then(bound => bound || effectiveSessionId)
-        : Promise.resolve(null);
-      return roomLookup;
-    }
-
-    async function getDoStub() {
-      const room = await getRoom();
-      if (!room) return null;
-      return env.WEBSOCKET_ROOM.get(env.WEBSOCKET_ROOM.idFromName(room));
-    }
-
-    async function postToRoom(path, body) {
-      const stub = await getDoStub();
-      if (!stub) return { status: 'no-page' };
-      const resp = await stub.fetch(new Request(`https://do${path}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body)
-      }));
-      return resp.json();
-    }
-
     const deps = {
       sessionId: effectiveSessionId,
       browserUrl,
       shortenURL,
       log: { logInfo, logWarn, logError },
-      getRoom,
-
-      bindRoom: async (room) => {
-        await sessionStub.fetch('https://do/room', { method: 'PUT', body: room });
-        roomLookup = Promise.resolve(room);
-      },
-
-      // Resolves {status: 'acked', ok, result?, error?} | {status: 'unconfirmed'} | {status: 'no-page'}.
-      sendCommand: (tool, command) => {
-        logInfo(`[sendCommand] tool=${tool} type=${command.type} sessionId=${effectiveSessionId || 'NONE'}`);
-        return postToRoom('/send', { tool, command });
-      },
-
-      // Same, but asks only the first live page; adds {status: 'closed'} if it disconnects first.
-      sendRequest: (command) => {
-        logInfo(`[sendRequest] type=${command.type} sessionId=${effectiveSessionId || 'NONE'}`);
-        return postToRoom('/request', command);
-      },
-
-      isBrowserConnected: async () => {
-        const stub = await getDoStub();
-        if (!stub) return false;
-        try {
-          const resp = await stub.fetch(new Request('https://do/status'));
-          const result = await resp.json();
-          return result.connected;
-        } catch {
-          return false;
-        }
-      }
+      room: roomForSession(env, effectiveSessionId),
     };
 
     // Register all tools

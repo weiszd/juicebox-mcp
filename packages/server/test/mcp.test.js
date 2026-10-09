@@ -295,7 +295,7 @@ describe('command tools: what the page receives (ticket 36)', () => {
 describe('load_session', () => {
   it('a room that cannot be reached answers "Error loading session: …", like a session that cannot be read', async () => {
     const session = await newSession();
-    const unreachable = { idFromName: (name) => name, get: () => ({ fetch: async () => { throw new Error('room unreachable'); } }) };
+    const unreachable = { idFromName: (name) => name, get: () => ({ send: async () => { throw new Error('room unreachable'); } }) };
     const request = new Request('https://jbmcp.test/mcp', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream', 'mcp-session-id': session },

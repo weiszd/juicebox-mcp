@@ -38,7 +38,7 @@ authentication beyond what §6.4 lists.
 ```
                  ┌────────────────────────────────────────────────┐
  MCP client ───► │ juicebox-mcp (Cloudflare Worker)                │
- (Streamable     │  /mcp  tools ─► deps.sendCommand ─┐             │
+ (Streamable     │  /mcp  tools ─► room.send ────────┐             │
   HTTP)          │  /ws   ◄─── Durable Object "room" ◄┘  relay     │
                  └───────────────▲────────────────────────────────┘
                                  │ wss  {type, ...}  (protocol.js)

@@ -1,8 +1,7 @@
 import { MessageType, CommandType, ErrorCode, isSyncEvent, isAck } from '@aidenlab/juicebox-remote/protocol';
+import { DurableObject } from 'cloudflare:workers';
 import { logInfo, logError } from '../lib/logger.js';
-
-/** How long a command waits for its first ack before the tool reports "sent, unconfirmed" (§5.4). */
-const ACK_TIMEOUT_MS = 10_000;
+import { ACK_TIMEOUT_MS, AckStatus } from '../room.js';
 
 /** A room's storage is deleted this long after its last message (ADR-0006). */
 const ROOM_TTL_MS = 24 * 60 * 60 * 1000;
@@ -10,52 +9,44 @@ const ROOM_TTL_MS = 24 * 60 * 60 * 1000;
 /**
  * Durable Object for managing WebSocket connections between the MCP server and browser clients.
  * One instance per room (keyed by room id).
- * Uses the Hibernation API for cost-efficient idle connections.
+ * Uses the Hibernation API for cost-efficient idle connections. Pages arrive on `fetch`
+ * (the WebSocket upgrade); the Worker calls the RPC methods `send`, `request` and
+ * `status` through `roomForSession` in src/room.js.
  */
-export class WebSocketRoom {
-  constructor(state, env) {
-    this.state = state;
-    this.env = env;
+export class WebSocketRoom extends DurableObject {
+  constructor(ctx, env) {
+    super(ctx, env);
     // Map of requestId -> { resolve, timer, page } for commands awaiting their first ack;
     // `page` is the one socket asked, for requests.
     this.pendingAcks = new Map();
   }
 
+  /** Pages connect here: the WebSocket upgrade from /ws?room=. */
   async fetch(request) {
-    const url = new URL(request.url);
-
-    // WebSocket upgrade from browser
     if (request.headers.get('Upgrade') === 'websocket') {
       return this.handleWebSocketUpgrade(request);
     }
-
-    // Worker sends a command to every page in the room, naming the tool that sent it first (§5.2)
-    if (url.pathname === '/send') {
-      const { tool, command } = await request.json();
-      const websockets = this.state.getWebSockets();
-      const notice = JSON.stringify({ type: MessageType.TOOL_CALL, name: tool });
-      for (const ws of websockets) {
-        try { ws.send(notice); } catch (e) { /* connection may be closing */ }
-      }
-      return Response.json(await this.sendToClient(command, websockets));
-    }
-
-    // Worker asks one page for data (getTrackList, getSession, getCompressedSession)
-    if (url.pathname === '/request') {
-      const command = await request.json();
-      return Response.json(await this.sendToClient(command, this.state.getWebSockets(), { firstOnly: true }));
-    }
-
-    // Health check / connection status
-    if (url.pathname === '/status') {
-      const websockets = this.state.getWebSockets();
-      return Response.json({
-        connected: websockets.length > 0,
-        count: websockets.length
-      });
-    }
-
     return new Response('Not Found', { status: 404 });
+  }
+
+  /** Names `tool` to every page first (§5.2), then sends `command` to all of them; resolves an AckStatus outcome. */
+  async send(tool, command) {
+    const websockets = this.ctx.getWebSockets();
+    const notice = JSON.stringify({ type: MessageType.TOOL_CALL, name: tool });
+    for (const ws of websockets) {
+      try { ws.send(notice); } catch (e) { /* connection may be closing */ }
+    }
+    return this.sendToClient(command, websockets);
+  }
+
+  /** Asks one page for data (getTrackList, getSession, getCompressedSession, …). */
+  async request(command) {
+    return this.sendToClient(command, this.ctx.getWebSockets(), { firstOnly: true });
+  }
+
+  status() {
+    const count = this.ctx.getWebSockets().length;
+    return { connected: count > 0, count };
   }
 
   handleWebSocketUpgrade(request) {
@@ -64,9 +55,9 @@ export class WebSocketRoom {
 
     // Accept the WebSocket with the hibernation API. The room id (set by the Worker)
     // rides on the socket: a hibernated Durable Object does not know its own name.
-    this.state.acceptWebSocket(server);
+    this.ctx.acceptWebSocket(server);
     server.serializeAttachment({ room: new URL(request.url).searchParams.get('room') });
-    logInfo(`[DO] WebSocket accepted. Total connections: ${this.state.getWebSockets().length}`);
+    logInfo(`[DO] WebSocket accepted. Total connections: ${this.ctx.getWebSockets().length}`);
 
     return new Response(null, { status: 101, webSocket: client });
   }
@@ -74,9 +65,7 @@ export class WebSocketRoom {
   /**
    * Send a command, with a fresh requestId, to every socket in `websockets` (or with
    * `firstOnly`, to the first one that takes it) and wait for the first ack. Resolves
-   * {status: 'acked', ok, result?, error?}, {status: 'unconfirmed'} when no ack arrives
-   * within ACK_TIMEOUT_MS, {status: 'closed'} when the one page asked disconnects
-   * first, or {status: 'no-page'}.
+   * one of the AckStatus outcomes (src/room.js).
    */
   async sendToClient(command, websockets, { firstOnly = false } = {}) {
     logInfo(`[DO sendToClient] command=${command.type} websockets=${websockets.length}`);
@@ -93,13 +82,13 @@ export class WebSocketRoom {
         logError(`[DO sendToClient] error sending:`, e);
       }
     }
-    if (sentTo.length === 0) return { status: 'no-page' };
+    if (sentTo.length === 0) return { status: AckStatus.NO_PAGE };
 
     // Registered before this handler yields, so no ack can arrive ahead of it.
     return new Promise((resolve) => {
       const timer = setTimeout(() => {
         this.pendingAcks.delete(requestId);
-        resolve({ status: 'unconfirmed' });
+        resolve({ status: AckStatus.UNCONFIRMED });
       }, ACK_TIMEOUT_MS);
       this.pendingAcks.set(requestId, { resolve, timer, page: firstOnly ? sentTo[0] : null });
     });
@@ -110,14 +99,14 @@ export class WebSocketRoom {
    * saved session, else an error.
    */
   async sendCatchUp(requester) {
-    const peers = this.state.getWebSockets().filter(ws => ws !== requester);
+    const peers = this.ctx.getWebSockets().filter(ws => ws !== requester);
     const live = await this.sendToClient({ type: CommandType.GET_SESSION }, peers, { firstOnly: true });
 
     let reply;
-    if (live.status === 'acked' && live.ok) {
+    if (live.status === AckStatus.ACKED && live.ok) {
       reply = { session: live.result };
     } else {
-      const saved = await this.state.storage.get('session');
+      const saved = await this.ctx.storage.get('session');
       reply = saved ? { compressedSession: saved } : { error: 'No session available' };
     }
     try {
@@ -132,14 +121,14 @@ export class WebSocketRoom {
       const data = JSON.parse(typeof message === 'string' ? message : new TextDecoder().decode(message));
 
       // A room that expired with no page left stays gone (ADR-0006).
-      if (data.type === MessageType.JOIN && (await this.state.storage.get('expired'))) {
+      if (data.type === MessageType.JOIN && (await this.ctx.storage.get('expired'))) {
         ws.send(JSON.stringify({ type: MessageType.ERROR, code: ErrorCode.ROOM_EXPIRED }));
         ws.close(1000, 'room expired');
         return;
       }
 
       // Every message pushes the room's expiry out to 24 h from now (ADR-0006).
-      await this.state.storage.setAlarm(Date.now() + ROOM_TTL_MS);
+      await this.ctx.storage.setAlarm(Date.now() + ROOM_TTL_MS);
 
       // The socket already reached this room via /ws?room=; `join` confirms which one.
       if (data.type === MessageType.JOIN) {
@@ -153,14 +142,14 @@ export class WebSocketRoom {
         if (pending) {
           this.pendingAcks.delete(data.requestId);
           clearTimeout(pending.timer);
-          pending.resolve({ status: 'acked', ok: data.ok, result: data.result, error: data.error });
+          pending.resolve({ status: AckStatus.ACKED, ok: data.ok, result: data.result, error: data.error });
         }
         return;
       }
 
       // Saved session: the page's latest compressed session, for a late joiner with no live peer
       if (data.type === MessageType.SAVE_SESSION && data.compressedSession) {
-        await this.state.storage.put('session', data.compressedSession);
+        await this.ctx.storage.put('session', data.compressedSession);
         return;
       }
 
@@ -172,7 +161,7 @@ export class WebSocketRoom {
 
       // Sync events: relay to all OTHER pages in the room
       if (isSyncEvent(data)) {
-        const websockets = this.state.getWebSockets();
+        const websockets = this.ctx.getWebSockets();
         const msg = JSON.stringify(data);
         for (const other of websockets) {
           if (other !== ws) {
@@ -194,7 +183,7 @@ export class WebSocketRoom {
       if (pending.page === ws) {
         this.pendingAcks.delete(requestId);
         clearTimeout(pending.timer);
-        pending.resolve({ status: 'closed' });
+        pending.resolve({ status: AckStatus.CLOSED });
       }
     }
     // Answer the close so the socket leaves getWebSockets() (no auto-reply at this compatibility date).
@@ -207,10 +196,10 @@ export class WebSocketRoom {
 
   /** 24 h after the last message (ADR-0006): delete the room's storage. */
   async alarm() {
-    await this.state.storage.deleteAll();
+    await this.ctx.storage.deleteAll();
     // With no page left the room is gone and later joins are refused; a connected page keeps it.
-    if (this.state.getWebSockets().length === 0) {
-      await this.state.storage.put('expired', true);
+    if (this.ctx.getWebSockets().length === 0) {
+      await this.ctx.storage.put('expired', true);
     }
   }
 }
