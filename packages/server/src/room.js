@@ -1,4 +1,5 @@
 import { logInfo } from './lib/logger.js';
+import { AckStatus } from './durableObjects/WebSocketRoom.js';
 
 /**
  * The only way the Worker reaches a room or an MCP session's room binding. The two
@@ -6,28 +7,15 @@ import { logInfo } from './lib/logger.js';
  * which room a session is in and hands tools one handle to it.
  */
 
-/** How long a command waits for its first ack before the tool reports "sent, unconfirmed" (§5.4). */
-export const ACK_TIMEOUT_MS = 10_000;
-
-/**
- * What a command or request to a room resolves to: `acked` with the first page's
- * {ok, result?, error?}; `unconfirmed` when no ack arrives within ACK_TIMEOUT_MS;
- * `closed` when the one page a request asked disconnects first; `no-page` when no
- * page is connected (or the session has no room).
- */
-export const AckStatus = Object.freeze({
-  ACKED: 'acked',
-  UNCONFIRMED: 'unconfirmed',
-  CLOSED: 'closed',
-  NO_PAGE: 'no-page',
-});
+// The ack outcomes and the timeout are the room's own (WebSocketRoom.js); tools read them here.
+export { ACK_TIMEOUT_MS, AckStatus } from './durableObjects/WebSocketRoom.js';
 
 /**
  * The room an MCP session drives (design §6): the room `join_room` bound it to, else
  * the room whose id is the session id; no session, no room. The binding is read at
  * most once per handle, and only when a tool asks for it.
  *
- * @returns {{current(): Promise<string|null>, bind(room: string): Promise<void>,
+ * @returns {{current(): Promise<string|null>, bind(roomId: string): Promise<void>,
  *   send(tool: string, command: object): Promise<object>, request(command: object): Promise<object>,
  *   isConnected(): Promise<boolean>}}
  */
@@ -42,37 +30,43 @@ export function roomForSession(env, sessionId) {
     return lookup;
   };
 
-  const stub = async () => {
-    const room = await current();
-    return room ? env.WEBSOCKET_ROOM.get(env.WEBSOCKET_ROOM.idFromName(room)) : null;
+  const roomStub = async () => {
+    const roomId = await current();
+    return roomId ? env.WEBSOCKET_ROOM.get(env.WEBSOCKET_ROOM.idFromName(roomId)) : null;
+  };
+
+  // Awaited, so a failing room rejects inside this call and reaches the tool's own catch.
+  const viaRoom = async (method, ...args) => {
+    const stub = await roomStub();
+    return stub ? await stub[method](...args) : { status: AckStatus.NO_PAGE };
   };
 
   return {
     current,
 
-    async bind(room) {
-      await session.setRoom(room);
-      lookup = Promise.resolve(room);
+    async bind(roomId) {
+      await session.setRoom(roomId);
+      lookup = Promise.resolve(roomId);
     },
 
     /** Names `tool` to every page, then sends `command` to all of them and waits for the first ack. */
-    async send(tool, command) {
+    send(tool, command) {
       logInfo(`[room.send] tool=${tool} type=${command.type} sessionId=${sessionId || 'NONE'}`);
-      const room = await stub();
-      return room ? room.send(tool, command) : { status: AckStatus.NO_PAGE };
+      return viaRoom('send', tool, command);
     },
 
     /** Asks the first live page only. */
-    async request(command) {
+    request(command) {
       logInfo(`[room.request] type=${command.type} sessionId=${sessionId || 'NONE'}`);
-      const room = await stub();
-      return room ? room.request(command) : { status: AckStatus.NO_PAGE };
+      return viaRoom('request', command);
     },
 
+    /** False when no page is connected; a room that cannot answer counts as none. */
     async isConnected() {
+      const stub = await roomStub();
+      if (!stub) return false;
       try {
-        const room = await stub();
-        return room ? (await room.status()).connected : false;
+        return (await stub.status()).connected;
       } catch {
         return false;
       }

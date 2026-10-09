@@ -1,7 +1,22 @@
 import { MessageType, CommandType, ErrorCode, isSyncEvent, isAck } from '@aidenlab/juicebox-remote/protocol';
 import { DurableObject } from 'cloudflare:workers';
 import { logInfo, logError } from '../lib/logger.js';
-import { ACK_TIMEOUT_MS, AckStatus } from '../room.js';
+
+/** How long a command waits for its first ack before the tool reports "sent, unconfirmed" (§5.4). */
+export const ACK_TIMEOUT_MS = 10_000;
+
+/**
+ * What a command or request to a room resolves to: `acked` with the first page's
+ * {ok, result?, error?}; `unconfirmed` when no ack arrives within ACK_TIMEOUT_MS;
+ * `closed` when the one page a request asked disconnects first; `no-page` when no
+ * page is connected (or the session has no room).
+ */
+export const AckStatus = Object.freeze({
+  ACKED: 'acked',
+  UNCONFIRMED: 'unconfirmed',
+  CLOSED: 'closed',
+  NO_PAGE: 'no-page',
+});
 
 /** A room's storage is deleted this long after its last message (ADR-0006). */
 const ROOM_TTL_MS = 24 * 60 * 60 * 1000;
@@ -24,7 +39,7 @@ export class WebSocketRoom extends DurableObject {
   /** Pages connect here: the WebSocket upgrade from /ws?room=. */
   async fetch(request) {
     if (request.headers.get('Upgrade') === 'websocket') {
-      return this.handleWebSocketUpgrade(request);
+      return this.#handleWebSocketUpgrade(request);
     }
     return new Response('Not Found', { status: 404 });
   }
@@ -36,12 +51,12 @@ export class WebSocketRoom extends DurableObject {
     for (const ws of websockets) {
       try { ws.send(notice); } catch (e) { /* connection may be closing */ }
     }
-    return this.sendToClient(command, websockets);
+    return this.#sendToClient(command, websockets);
   }
 
   /** Asks one page for data (getTrackList, getSession, getCompressedSession, …). */
   async request(command) {
-    return this.sendToClient(command, this.ctx.getWebSockets(), { firstOnly: true });
+    return this.#sendToClient(command, this.ctx.getWebSockets(), { firstOnly: true });
   }
 
   status() {
@@ -49,7 +64,7 @@ export class WebSocketRoom extends DurableObject {
     return { connected: count > 0, count };
   }
 
-  handleWebSocketUpgrade(request) {
+  #handleWebSocketUpgrade(request) {
     const pair = new WebSocketPair();
     const [client, server] = Object.values(pair);
 
@@ -65,9 +80,9 @@ export class WebSocketRoom extends DurableObject {
   /**
    * Send a command, with a fresh requestId, to every socket in `websockets` (or with
    * `firstOnly`, to the first one that takes it) and wait for the first ack. Resolves
-   * one of the AckStatus outcomes (src/room.js).
+   * one of the AckStatus outcomes.
    */
-  async sendToClient(command, websockets, { firstOnly = false } = {}) {
+  async #sendToClient(command, websockets, { firstOnly = false } = {}) {
     logInfo(`[DO sendToClient] command=${command.type} websockets=${websockets.length}`);
 
     const requestId = crypto.randomUUID();
@@ -98,9 +113,9 @@ export class WebSocketRoom extends DurableObject {
    * Late joiner catch-up (design §7): the first live peer's session, else the room's
    * saved session, else an error.
    */
-  async sendCatchUp(requester) {
+  async #sendCatchUp(requester) {
     const peers = this.ctx.getWebSockets().filter(ws => ws !== requester);
-    const live = await this.sendToClient({ type: CommandType.GET_SESSION }, peers, { firstOnly: true });
+    const live = await this.#sendToClient({ type: CommandType.GET_SESSION }, peers, { firstOnly: true });
 
     let reply;
     if (live.status === AckStatus.ACKED && live.ok) {
@@ -155,7 +170,7 @@ export class WebSocketRoom extends DurableObject {
 
       // Late joiner: send it the room's current state
       if (data.type === MessageType.REQUEST_SESSION_FROM_PEER) {
-        await this.sendCatchUp(ws);
+        await this.#sendCatchUp(ws);
         return;
       }
 
