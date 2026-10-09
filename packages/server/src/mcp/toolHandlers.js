@@ -918,7 +918,7 @@ Just ask:
           return { content: [{ type: 'text', text: `No data available from ${source} data source. This may be a temporary network issue.` }], isError: true };
         }
 
-        const stats = { totalMaps: maps.length, assemblies: {}, biosources: {}, labs: {}, experiments: {} };
+        const stats = { totalMaps: maps.length, assemblies: {}, biosources: {}, labs: {} };
         maps.forEach(map => {
           const assembly = map.metadata?.Assembly || 'Unknown';
           stats.assemblies[assembly] = (stats.assemblies[assembly] || 0) + 1;
@@ -926,8 +926,6 @@ Just ask:
           stats.biosources[biosource] = (stats.biosources[biosource] || 0) + 1;
           const lab = map.metadata?.Lab || 'Unknown';
           stats.labs[lab] = (stats.labs[lab] || 0) + 1;
-          const experiment = map.metadata?.Experiment || 'Unknown';
-          stats.experiments[experiment] = (stats.experiments[experiment] || 0) + 1;
         });
 
         const config = getDataSource(source);

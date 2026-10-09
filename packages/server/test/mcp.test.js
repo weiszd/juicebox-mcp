@@ -482,6 +482,8 @@ describe('join link and join_room', () => {
     expect(result.content.find((c) => c.type === 'image')).toBeUndefined(); // the QR is the view's, not a file
     expect(result.structuredContent).toMatchObject({ room: session, joinUrl: link });
     expect(await decodeQrPng(result.structuredContent.qrPng)).toBe(link);
+    // The card reads every field the tool fills in; a rename on either side would leave it scraping the text.
+    for (const field of Object.keys(result.structuredContent)) expect(view.text).toContain(`sc?.${field}`);
   });
 
   it('serves the data source configurations as resources', async () => {
