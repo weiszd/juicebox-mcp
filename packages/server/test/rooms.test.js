@@ -10,6 +10,8 @@ import { env, runInDurableObject, runDurableObjectAlarm, evictDurableObject } fr
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { MessageType, CommandType, SyncEventType, ErrorCode } from '@aidenlab/juicebox-remote/protocol';
 import { ORIGIN, upgrade, openPage, join, closePages, track } from './pages.js';
+import { WebSocketRoom } from '../src/durableObjects/WebSocketRoom.js';
+import { McpSession } from '../src/durableObjects/McpSession.js';
 
 const ROOM_ID = /^[0-9A-HJKMNP-TV-Z]{10}$/; // Crockford base32: no I, L, O, U
 const HOUR = 60 * 60 * 1000;
@@ -194,5 +196,27 @@ describe('expiry (ADR-0006)', () => {
 
     const b = await openPage(`?room=${room}`);
     expect(await join(b, room)).toEqual({ type: MessageType.JOINED, room });
+  });
+});
+
+describe('Durable Object boundaries', () => {
+  const publicMethods = (cls) => Object.getOwnPropertyNames(cls.prototype).filter((name) => name !== 'constructor').sort();
+
+  it("a Durable Object's public methods are its RPC surface: helpers stay private", () => {
+    // Every public method is callable through a stub. Adding one is a deliberate change to this list.
+    expect(publicMethods(WebSocketRoom)).toEqual(
+      ['alarm', 'fetch', 'request', 'send', 'status', 'webSocketClose', 'webSocketError', 'webSocketMessage']);
+    expect(publicMethods(McpSession)).toEqual(['getRoom', 'setRoom']);
+  });
+
+  it('Durable Objects import only each other, the logger, the protocol and the runtime, never Worker-side modules', () => {
+    const sources = import.meta.glob('../src/durableObjects/*.js', { query: '?raw', import: 'default', eager: true });
+    const allowed = /^(\.\/[^/]+\.js|\.\.\/lib\/[^/]+\.js|cloudflare:workers|@aidenlab\/juicebox-remote\/protocol)$/;
+    expect(Object.keys(sources).length).toBeGreaterThan(0);
+    for (const [file, text] of Object.entries(sources)) {
+      for (const [, from] of text.matchAll(/^\s*(?:import|export)\b[^;]*?\bfrom\s+['"]([^'"]+)['"]/gm)) {
+        expect(from, `${file} imports ${from}`).toMatch(allowed);
+      }
+    }
   });
 });

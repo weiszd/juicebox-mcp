@@ -21,7 +21,7 @@ npm install                    # installs both workspaces
 # Tests (vitest projects: `remote` in Node; `server` inside workerd via
 # @cloudflare/vitest-pool-workers, Worker + Durable Object from wrangler.toml)
 npm test                       # watch
-npm run test:run               # single run
+npm run test:run               # single run; green only on exit 0 (unhandled errors are reported apart from the test count)
 npm run test:run -- packages/server/test/search.test.js   # one file
 npm run test:run -- -t "substring of name"                # one test
 

@@ -3,7 +3,8 @@
 //
 //   node scripts/dev-check.mjs <room> <tool> ['<json args>']
 //   node scripts/dev-check.mjs T35CHECKCQ list_panels
-//   node scripts/dev-check.mjs T35CHECKCQ load_map '{"url":"https://…/combined.hic","panel":"new"}'
+//   node scripts/dev-check.mjs T35CHECKCQ load_map '{"url":"https://hicfiles.s3.amazonaws.com/hiseq/gm12878/in-situ/combined.hic","panel":"new"}'
+//   (a map known to load in the page; an ENCODE portal download URL may fail with "Failed to fetch")
 //
 // Use a throwaway room (open https://juicebot-dev.3dg.io/?room=<room> in a tab first), never a
 // room someone is working in: the room asks its first live page for the session on every
