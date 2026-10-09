@@ -14,6 +14,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js';
 import { registerTools } from './mcp/toolHandlers.js';
 import { INSTRUCTIONS } from './mcp/instructions.js';
+import { SERVER_INFO } from './mcp/serverInfo.js';
 import { tinyURLShortener } from './urlShortener.js';
 import { logInfo, logWarn, logError } from './lib/logger.js';
 
@@ -132,10 +133,7 @@ async function handleMcpRequest(request, env) {
     logInfo(`[MCP] ${request.method} ${body?.method || 'N/A'} | mcp-session-id: ${sessionId || 'NONE'} | x-openai-session: ${openaiSession ? 'present' : 'NONE'}`);
 
     // Create a new MCP server for this request
-    const mcpServer = new McpServer({
-      name: 'juicebox-server',
-      version: '1.1.0'
-    }, {
+    const mcpServer = new McpServer(SERVER_INFO, {
       // Returned in the initialize result; every MCP client passes it to the
       // model, so connector-only users (ChatGPT, Codex, Claude connectors)
       // get the workflow without the plugin skill.
